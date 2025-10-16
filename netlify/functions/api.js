@@ -2,7 +2,7 @@
 
 const { google } = require('googleapis');
 const { GoogleAuth } = require('google-auth-library');
-const { Resend } = require('resend');
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 
 // --- CONFIGURATION ---
 const CALENDAR_ID = "64693698ebab23975e6f5d11f9f3b170a6d11b9a19ebb459e1486314ee930ebf@group.calendar.google.com";
@@ -25,7 +25,11 @@ const getGoogleClient = () => {
   return new GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/spreadsheets'] }).getClient();
 };
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+// --- Brevo (Sendinblue) Client Setup ---
+const brevoClient = SibApiV3Sdk.ApiClient.instance;
+const apiKey = brevoClient.authentications['api-key'];
+apiKey.apiKey = process.env.BREVO_API_KEY;
+const brevoApi = new SibApiV3Sdk.TransactionalEmailsApi();
 
 // --- CORS HEADERS ---
 const corsHeaders = {
@@ -88,7 +92,6 @@ exports.handler = async (event) => {
       const { date } = event.queryStringParameters;
       if (!date) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date parameter' }) };
 
-      // Construct date objects correctly in the target timezone
       const startOfDay = new Date(`${date}T00:00:00`);
       const endOfDay = new Date(`${date}T23:59:59`);
 
@@ -96,7 +99,7 @@ exports.handler = async (event) => {
         calendarId: CALENDAR_ID,
         timeMin: startOfDay.toISOString(),
         timeMax: endOfDay.toISOString(),
-        timeZone: TZ, // Tell Google Calendar the timezone for the request
+        timeZone: TZ,
         singleEvents: true,
         orderBy: 'startTime',
       });
@@ -113,12 +116,8 @@ exports.handler = async (event) => {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing required booking fields.' }) };
       }
       
-      // --- TIMEZONE FIX ---
-      // Create date objects by explicitly telling it's in the target timezone
       const startTimeStr = `${date}T${start}:00`;
       const startTime = new Date(startTimeStr);
-
-      // Google Calendar API is smart enough to use the timeZone property from the event body
       const endTime = new Date(startTime.getTime() + durationMin * 60000);
 
       const conflictRes = await calendar.events.list({ calendarId: CALENDAR_ID, timeMin: startTime.toISOString(), timeMax: endTime.toISOString(), timeZone: TZ, maxResults: 1 });
@@ -140,7 +139,6 @@ exports.handler = async (event) => {
         },
       });
 
-      // For Sheets, format the date explicitly for the correct timezone
       const localeOptions = { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
       const formattedStart = new Intl.DateTimeFormat('sv-SE', localeOptions).format(startTime);
       const formattedEnd = new Intl.DateTimeFormat('sv-SE', localeOptions).format(endTime);
@@ -153,11 +151,27 @@ exports.handler = async (event) => {
 
       await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${SHEET_NAME}!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [newRow] } });
       
+      // --- Send Email with Brevo ---
       const emailHtml = buildEmailHtml({ clientName: client.name, fecha: date, hora: start, duracion: durationMin, telefono: client.phone, serviceName, htmlLink: newEvent.data.htmlLink });
       
-      await resend.emails.send({ from: 'onboarding@resend.dev', to: client.email, subject: `✅ Confirmación de Reserva — ${serviceName}`, html: emailHtml });
+      const sender = { name: 'Vanessa Nails Studio', email: 'nailsvanessacl@gmail.com' };
+
+      // Send to client
+      await brevoApi.sendTransacEmail({
+        sender,
+        to: [{ email: client.email, name: client.name }],
+        subject: `✅ Confirmación de Reserva — ${serviceName}`,
+        htmlContent: emailHtml,
+      });
+
+      // Send copy to owner
       if (OWNER_EMAIL) {
-        await resend.emails.send({ from: 'onboarding@resend.dev', to: OWNER_EMAIL, subject: `Nueva Cita — ${serviceName} (${client.name})`, html: emailHtml });
+        await brevoApi.sendTransacEmail({
+          sender,
+          to: [{ email: OWNER_EMAIL, name: 'Vanessa Nails Studio' }],
+          subject: `Nueva Cita — ${serviceName} (${client.name})`,
+          htmlContent: emailHtml,
+        });
       }
 
       return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ success: true, eventId: newEvent.data.id }) };
