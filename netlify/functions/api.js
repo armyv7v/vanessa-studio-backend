@@ -88,13 +88,15 @@ exports.handler = async (event) => {
       const { date } = event.queryStringParameters;
       if (!date) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date parameter' }) };
 
-      const startOfDay = new Date(`${date}T00:00:00.000Z`);
-      const endOfDay = new Date(`${date}T23:59:59.999Z`);
+      // Construct date objects correctly in the target timezone
+      const startOfDay = new Date(`${date}T00:00:00`);
+      const endOfDay = new Date(`${date}T23:59:59`);
 
       const res = await calendar.events.list({
         calendarId: CALENDAR_ID,
         timeMin: startOfDay.toISOString(),
         timeMax: endOfDay.toISOString(),
+        timeZone: TZ, // Tell Google Calendar the timezone for the request
         singleEvents: true,
         orderBy: 'startTime',
       });
@@ -111,10 +113,15 @@ exports.handler = async (event) => {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing required booking fields.' }) };
       }
       
-      const startTime = new Date(`${date}T${start}`);
+      // --- TIMEZONE FIX ---
+      // Create date objects by explicitly telling it's in the target timezone
+      const startTimeStr = `${date}T${start}:00`;
+      const startTime = new Date(startTimeStr);
+
+      // Google Calendar API is smart enough to use the timeZone property from the event body
       const endTime = new Date(startTime.getTime() + durationMin * 60000);
 
-      const conflictRes = await calendar.events.list({ calendarId: CALENDAR_ID, timeMin: startTime.toISOString(), timeMax: endTime.toISOString(), maxResults: 1 });
+      const conflictRes = await calendar.events.list({ calendarId: CALENDAR_ID, timeMin: startTime.toISOString(), timeMax: endTime.toISOString(), timeZone: TZ, maxResults: 1 });
       if (conflictRes.data.items.length > 0) {
         return { statusCode: 409, headers: corsHeaders, body: JSON.stringify({ error: 'El horario seleccionado ya no está disponible. Por favor, elige otro.' }) };
       }
@@ -122,46 +129,35 @@ exports.handler = async (event) => {
       const eventTitle = `Cita: ${serviceName} con ${client.name}` + (extraCupo ? " (EXTRA)" : "");
       const eventDescription = `Cliente: ${client.name}\nEmail: ${client.email}\nTeléfono: ${client.phone}\nServicio: ${serviceName}\nDuración: ${durationMin} min\nModalidad: ${extraCupo ? 'Extra Cupo' : 'Normal'}`;
       
-      // --- FIX: Remove attendees and sendNotifications to prevent Google error ---
       const newEvent = await calendar.events.insert({
         calendarId: CALENDAR_ID,
-        sendNotifications: false, // Explicitly disable Google's notifications
+        sendNotifications: false,
         requestBody: {
           summary: eventTitle,
           description: eventDescription,
           start: { dateTime: startTime.toISOString(), timeZone: TZ },
           end: { dateTime: endTime.toISOString(), timeZone: TZ },
-          // No attendees array here
         },
       });
 
+      // For Sheets, format the date explicitly for the correct timezone
+      const localeOptions = { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+      const formattedStart = new Intl.DateTimeFormat('sv-SE', localeOptions).format(startTime);
+      const formattedEnd = new Intl.DateTimeFormat('sv-SE', localeOptions).format(endTime);
+
       const newRow = [
         new Date().toISOString(), client.name, client.email, client.phone, serviceName,
-        startTime.toLocaleString('sv-SE', { timeZone: TZ }), endTime.toLocaleString('sv-SE', { timeZone: TZ }),
+        formattedStart, formattedEnd,
         durationMin, extraCupo ? "SI" : "NO", newEvent.data.id, newEvent.data.htmlLink,
       ];
 
       await sheets.spreadsheets.values.append({ spreadsheetId: SHEET_ID, range: `${SHEET_NAME}!A1`, valueInputOption: 'USER_ENTERED', requestBody: { values: [newRow] } });
       
-      // --- Send Email with Resend ---
       const emailHtml = buildEmailHtml({ clientName: client.name, fecha: date, hora: start, duracion: durationMin, telefono: client.phone, serviceName, htmlLink: newEvent.data.htmlLink });
       
-      // Send to client
-      await resend.emails.send({
-        from: 'onboarding@resend.dev',
-        to: client.email,
-        subject: `✅ Confirmación de Reserva — ${serviceName}`,
-        html: emailHtml,
-      });
-
-      // Send copy to owner
+      await resend.emails.send({ from: 'onboarding@resend.dev', to: client.email, subject: `✅ Confirmación de Reserva — ${serviceName}`, html: emailHtml });
       if (OWNER_EMAIL) {
-        await resend.emails.send({
-          from: 'onboarding@resend.dev',
-          to: OWNER_EMAIL,
-          subject: `Nueva Cita — ${serviceName} (${client.name})`,
-          html: emailHtml,
-        });
+        await resend.emails.send({ from: 'onboarding@resend.dev', to: OWNER_EMAIL, subject: `Nueva Cita — ${serviceName} (${client.name})`, html: emailHtml });
       }
 
       return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ success: true, eventId: newEvent.data.id }) };
