@@ -122,15 +122,16 @@ exports.handler = async (event) => {
       const eventTitle = `Cita: ${serviceName} con ${client.name}` + (extraCupo ? " (EXTRA)" : "");
       const eventDescription = `Cliente: ${client.name}\nEmail: ${client.email}\nTeléfono: ${client.phone}\nServicio: ${serviceName}\nDuración: ${durationMin} min\nModalidad: ${extraCupo ? 'Extra Cupo' : 'Normal'}`;
       
+      // --- FIX: Remove attendees and sendNotifications to prevent Google error ---
       const newEvent = await calendar.events.insert({
         calendarId: CALENDAR_ID,
+        sendNotifications: false, // Explicitly disable Google's notifications
         requestBody: {
           summary: eventTitle,
           description: eventDescription,
           start: { dateTime: startTime.toISOString(), timeZone: TZ },
           end: { dateTime: endTime.toISOString(), timeZone: TZ },
-          attendees: [{ email: client.email }], // Only invite the client
-          // sendNotifications: false, // We handle notifications via Resend
+          // No attendees array here
         },
       });
 
@@ -154,12 +155,14 @@ exports.handler = async (event) => {
       });
 
       // Send copy to owner
-      await resend.emails.send({
-        from: 'onboarding@resend.dev',
-        to: OWNER_EMAIL,
-        subject: `Nueva Cita — ${serviceName} (${client.name})`,
-        html: emailHtml,
-      });
+      if (OWNER_EMAIL) {
+        await resend.emails.send({
+          from: 'onboarding@resend.dev',
+          to: OWNER_EMAIL,
+          subject: `Nueva Cita — ${serviceName} (${client.name})`,
+          html: emailHtml,
+        });
+      }
 
       return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ success: true, eventId: newEvent.data.id }) };
     }
