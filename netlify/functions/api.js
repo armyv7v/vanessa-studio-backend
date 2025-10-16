@@ -129,8 +129,8 @@ exports.handler = async (event) => {
           description: eventDescription,
           start: { dateTime: startTime.toISOString(), timeZone: TZ },
           end: { dateTime: endTime.toISOString(), timeZone: TZ },
-          attendees: [{ email: client.email }, { email: OWNER_EMAIL }],
-          sendNotifications: true,
+          attendees: [{ email: client.email }], // Only invite the client
+          // sendNotifications: false, // We handle notifications via Resend
         },
       });
 
@@ -144,10 +144,20 @@ exports.handler = async (event) => {
       
       // --- Send Email with Resend ---
       const emailHtml = buildEmailHtml({ clientName: client.name, fecha: date, hora: start, duracion: durationMin, telefono: client.phone, serviceName, htmlLink: newEvent.data.htmlLink });
+      
+      // Send to client
       await resend.emails.send({
-        from: 'onboarding@resend.dev', // This is Resend's default for the free plan
+        from: 'onboarding@resend.dev',
         to: client.email,
         subject: `✅ Confirmación de Reserva — ${serviceName}`,
+        html: emailHtml,
+      });
+
+      // Send copy to owner
+      await resend.emails.send({
+        from: 'onboarding@resend.dev',
+        to: OWNER_EMAIL,
+        subject: `Nueva Cita — ${serviceName} (${client.name})`,
         html: emailHtml,
       });
 
