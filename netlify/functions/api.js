@@ -144,19 +144,12 @@ exports.handler = async (event) => {
         },
       });
 
-      // --- CORRECCIÓN: Formatear la fecha y hora para Google Sheets ---
-      // Opciones para formatear la fecha en el formato "DD/MM/YYYY HH:mm:ss" para la zona horaria de Santiago.
-      const sheetLocaleOptions = {
-        timeZone: TZ,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        hour12: false,
-      };
-
+      // --- CORRECCIÓN: Guardar fechas en formato ISO para que Apps Script las reconozca ---
+      // Google Sheets convertirá esto a una fecha/hora automáticamente.
       const newRow = [
         new Date().toISOString(), client.name, client.email, client.phone, serviceName,
-        new Intl.DateTimeFormat('es-CL', sheetLocaleOptions).format(startTime), // Formato para startTime
-        new Intl.DateTimeFormat('es-CL', sheetLocaleOptions).format(endTime),   // Formato para endTime
+        startTime.toISOString(), // Guardar como ISO
+        endTime.toISOString(),   // Guardar como ISO
         durationMin, extraCupo ? "SI" : "NO", newEvent.data.id, newEvent.data.htmlLink,
       ];
 
