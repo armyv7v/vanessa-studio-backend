@@ -92,8 +92,14 @@ exports.handler = async (event) => {
       const { date } = event.queryStringParameters;
       if (!date) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date parameter' }) };
 
-      const startOfDay = new Date(`${date}T00:00:00`);
-      const endOfDay = new Date(`${date}T23:59:59`);
+      // --- CORRECCIÓN: Construir el rango de fechas en la zona horaria correcta (America/Santiago) ---
+      // Esto asegura que le pedimos a Google Calendar los eventos para el día completo en Chile,
+      // sin importar la zona horaria del servidor.
+      // new Date('YYYY-MM-DD') crea la fecha a medianoche en UTC.
+      // Le sumamos y restamos el offset para que represente el día completo en la zona horaria de Santiago.
+      const dayStartUTC = new Date(date);
+      const startOfDay = new Date(dayStartUTC.getTime() - (dayStartUTC.getTimezoneOffset() * 60000));
+      const endOfDay = new Date(startOfDay.getTime() + (24 * 60 * 60 * 1000 - 1));
 
       const res = await calendar.events.list({
         calendarId: CALENDAR_ID,
