@@ -130,22 +130,33 @@ exports.handler = async (event) => {
       
       const newEvent = await calendar.events.insert({
         calendarId: CALENDAR_ID,
-        sendNotifications: false,
+        // --- CORRECCIÓN 1: Habilitar el envío de invitaciones ---
+        // Esto hará que Google Calendar envíe una invitación oficial al cliente.
+        sendNotifications: true,
         requestBody: {
           summary: eventTitle,
           description: eventDescription,
           start: { dateTime: startTime.toISOString(), timeZone: TZ },
           end: { dateTime: endTime.toISOString(), timeZone: TZ },
+          // --- CORRECCIÓN 2: Añadir al cliente como asistente ---
+          // Esto es crucial para que la invitación se envíe a la persona correcta.
+          attendees: [{ email: client.email }],
         },
       });
 
-      const localeOptions = { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-      const formattedStart = new Intl.DateTimeFormat('sv-SE', localeOptions).format(startTime);
-      const formattedEnd = new Intl.DateTimeFormat('sv-SE', localeOptions).format(endTime);
+      // --- CORRECCIÓN: Formatear la fecha y hora para Google Sheets ---
+      // Opciones para formatear la fecha en el formato "DD/MM/YYYY HH:mm:ss" para la zona horaria de Santiago.
+      const sheetLocaleOptions = {
+        timeZone: TZ,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      };
 
       const newRow = [
         new Date().toISOString(), client.name, client.email, client.phone, serviceName,
-        formattedStart, formattedEnd,
+        new Intl.DateTimeFormat('es-CL', sheetLocaleOptions).format(startTime), // Formato para startTime
+        new Intl.DateTimeFormat('es-CL', sheetLocaleOptions).format(endTime),   // Formato para endTime
         durationMin, extraCupo ? "SI" : "NO", newEvent.data.id, newEvent.data.htmlLink,
       ];
 
