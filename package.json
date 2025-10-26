@@ -4,7 +4,8 @@
   "description": "Netlify functions for Vanessa Studio booking app.",
   "main": "slots.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "get-token": "node scripts/generate-google-token.js"
   },
   "author": "",
   "license": "ISC",
