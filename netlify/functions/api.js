@@ -1,6 +1,7 @@
 // netlify/functions/api.js
 
 const { google } = require('googleapis');
+const { DateTime } = require('luxon');
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 
 // --- Configuration ---
@@ -104,14 +105,13 @@ exports.handler = async (event) => {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date parameter' }) };
       }
 
-      const dayStartUTC = new Date(date);
-      const startOfDay = new Date(dayStartUTC.getTime() - dayStartUTC.getTimezoneOffset() * 60000);
-      const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000 - 1);
+      const startOfDay = DateTime.fromISO(date, { zone: TZ }).startOf('day');
+      const endOfDay = startOfDay.plus({ days: 1 });
 
       const res = await calendar.events.list({
         calendarId: CALENDAR_ID,
-        timeMin: startOfDay.toISOString(),
-        timeMax: endOfDay.toISOString(),
+        timeMin: startOfDay.toISO(),
+        timeMax: endOfDay.toISO(),
         timeZone: TZ,
         singleEvents: true,
         orderBy: 'startTime',
@@ -132,14 +132,13 @@ exports.handler = async (event) => {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing required booking fields.' }) };
       }
 
-      const startTimeStr = `${date}T${start}:00`;
-      const startTime = new Date(startTimeStr);
-      const endTime = new Date(startTime.getTime() + durationMin * 60000);
+      const startTime = DateTime.fromISO(`${date}T${start}`, { zone: TZ });
+      const endTime = startTime.plus({ minutes: durationMin });
 
       const conflictRes = await calendar.events.list({
         calendarId: CALENDAR_ID,
-        timeMin: startTime.toISOString(),
-        timeMax: endTime.toISOString(),
+        timeMin: startTime.toISO(),
+        timeMax: endTime.toISO(),
         timeZone: TZ,
         maxResults: 1,
       });
@@ -168,8 +167,8 @@ exports.handler = async (event) => {
         requestBody: {
           summary: eventTitle,
           description: eventDescription,
-          start: { dateTime: startTime.toISOString(), timeZone: TZ },
-          end: { dateTime: endTime.toISOString(), timeZone: TZ },
+          start: { dateTime: startTime.toISO(), timeZone: TZ },
+          end: { dateTime: endTime.toISO(), timeZone: TZ },
           attendees: [{ email: client.email }],
         },
       });
@@ -180,8 +179,8 @@ exports.handler = async (event) => {
         client.email,
         client.phone,
         serviceName,
-        startTime.toISOString(),
-        endTime.toISOString(),
+        startTime.toISO(),
+        endTime.toISO(),
         durationMin,
         extraCupo ? 'SI' : 'NO',
         newEvent.data.id,
