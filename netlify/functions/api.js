@@ -51,6 +51,8 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
+const normalizeEmail = (value = '') => String(value).trim().toLowerCase();
+
 const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceName, htmlLink }) => {
   const bankList = BANK_LINES.map((line) => `<li>${line}</li>`).join('');
   const whatsLink = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(
@@ -89,6 +91,44 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
   </div>`;
 };
 
+const getLatestCustomerByEmail = async (sheets, email) => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!A:K`,
+  });
+
+  const rows = res.data.values || [];
+  if (!rows.length) return null;
+
+  const matches = rows
+    .map((row) => ({
+      created: row[0] || '',
+      name: row[1] || '',
+      email: normalizeEmail(row[2]),
+      rawEmail: row[2] || '',
+      phone: row[3] || '',
+    }))
+    .filter((row) => row.email === normalizedEmail);
+
+  if (!matches.length) return null;
+
+  matches.sort((a, b) => {
+    const aTime = Date.parse(a.created) || 0;
+    const bTime = Date.parse(b.created) || 0;
+    return bTime - aTime;
+  });
+
+  const latest = matches[0];
+  return {
+    name: latest.name,
+    email: latest.rawEmail || email.trim(),
+    phone: latest.phone,
+  };
+};
+
 exports.handler = async (event) => {
   if (event.httpMethod === 'OPTIONS') {
     return { statusCode: 204, headers: corsHeaders, body: '' };
@@ -100,7 +140,16 @@ exports.handler = async (event) => {
     const sheets = google.sheets({ version: 'v4', auth: authClient });
 
     if (event.httpMethod === 'GET') {
-      const { date } = event.queryStringParameters || {};
+      const { date, email } = event.queryStringParameters || {};
+
+      if (email) {
+        const customer = await getLatestCustomerByEmail(sheets, email);
+        if (!customer) {
+          return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Cliente no encontrado' }) };
+        }
+        return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ customer }) };
+      }
+
       if (!date) {
         return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date parameter' }) };
       }
