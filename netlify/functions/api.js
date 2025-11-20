@@ -276,11 +276,26 @@ exports.handler = async (event) => {
 
     return { statusCode: 405, headers: corsHeaders, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   } catch (error) {
-    console.error('Error:', error);
-    return {
-      statusCode: 500,
-      headers: corsHeaders,
-      body: JSON.stringify({ error: 'Internal Server Error: ' + error.message }),
-    };
+    console.error('Error en la función:', error);
+
+    // Comprueba si el error es de tipo 'invalid_grant' de Google OAuth.
+    // Esto sucede cuando el token de actualización es inválido o ha sido revocado.
+    const isInvalidGrant = (error.response && error.response.data && error.response.data.error === 'invalid_grant') ||
+                           (error.message && error.message.includes('invalid_grant'));
+
+    if (isInvalidGrant) {
+      console.error("El token de OAuth es inválido. Se requiere re-autenticación.");
+      return {
+        statusCode: 401, // Unauthorized
+        headers: corsHeaders,
+        body: JSON.stringify({
+          error: 'reauthorization_required',
+          message: 'La sesión con Google ha expirado. Por favor, vuelve a conectar la cuenta.'
+        }),
+      };
+    }
+
+    // Para todos los demás errores, devuelve un error 500 genérico.
+    return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: 'Internal Server Error: ' + error.message }) };
   }
 };
