@@ -4,11 +4,34 @@ const path = require('path');
 
 const horariosPath = path.join(__dirname, '../../data/horarios.json');
 
+const DEFAULT_HORARIOS = {
+    horarioAtencion: {
+        lunes: ['09:00', '18:00'],
+        martes: ['09:00', '18:00'],
+        miércoles: ['09:00', '18:00'],
+        jueves: ['09:00', '18:00'],
+        viernes: ['09:00', '18:00'],
+        sábado: ['10:00', '14:00'],
+        domingo: [],
+    },
+};
+
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
+
+// Ensure data directory and file exist
+function ensureHorariosFile() {
+    const dataDir = path.dirname(horariosPath);
+    if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+    }
+    if (!fs.existsSync(horariosPath)) {
+        fs.writeFileSync(horariosPath, JSON.stringify(DEFAULT_HORARIOS, null, 2), 'utf8');
+    }
+}
 
 exports.handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
@@ -16,6 +39,8 @@ exports.handler = async (event) => {
     }
 
     try {
+        ensureHorariosFile();
+
         if (event.httpMethod === 'GET') {
             // Read horarios
             const data = fs.readFileSync(horariosPath, 'utf8');
@@ -33,7 +58,7 @@ exports.handler = async (event) => {
             // Create backup
             if (fs.existsSync(horariosPath)) {
                 const timestamp = Date.now();
-                const backupPath = path.join(__dirname, `../../data/horarios.backup.${timestamp}.json`);
+                const backupPath = path.join(path.dirname(horariosPath), `horarios.backup.${timestamp}.json`);
                 fs.copyFileSync(horariosPath, backupPath);
             }
 
