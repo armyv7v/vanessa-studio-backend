@@ -1,6 +1,5 @@
 // netlify/functions/horarios.js
-// NOTE: Netlify Functions don't have persistent filesystem access.
-// This version uses environment variables or returns defaults.
+const { getStore } = require('@netlify/blobs');
 
 const DEFAULT_HORARIOS = {
     horarioAtencion: {
@@ -20,22 +19,26 @@ const corsHeaders = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
-exports.handler = async (event) => {
+exports.handler = async (event, context) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 204, headers: corsHeaders, body: '' };
     }
 
     try {
+        // Get the blob store
+        const store = getStore('horarios');
+
         if (event.httpMethod === 'GET') {
-            // Try to read from environment variable, fallback to defaults
+            // Try to read from blob store
             let horarios = DEFAULT_HORARIOS;
 
-            if (process.env.HORARIOS_JSON) {
-                try {
-                    horarios = JSON.parse(process.env.HORARIOS_JSON);
-                } catch (e) {
-                    console.error('Failed to parse HORARIOS_JSON env var:', e);
+            try {
+                const storedData = await store.get('current', { type: 'json' });
+                if (storedData) {
+                    horarios = storedData;
                 }
+            } catch (e) {
+                console.log('No stored horarios found, using defaults:', e.message);
             }
 
             return {
@@ -46,15 +49,27 @@ exports.handler = async (event) => {
         }
 
         if (event.httpMethod === 'POST') {
-            // For now, just acknowledge the POST but explain it can't persist
-            // In the future, this should update via Netlify API or use a database
+            // Save horarios to blob store
+            const newData = JSON.parse(event.body || '{}');
+
+            // Create backup with timestamp
+            const timestamp = Date.now();
+            try {
+                const currentData = await store.get('current', { type: 'json' });
+                if (currentData) {
+                    await store.set(`backup-${timestamp}`, JSON.stringify(currentData));
+                }
+            } catch (e) {
+                console.log('No previous data to backup:', e.message);
+            }
+
+            // Save new data
+            await store.set('current', JSON.stringify(newData));
+
             return {
                 statusCode: 200,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    success: true,
-                    warning: 'Changes are not persisted. Please configure a database or use Netlify environment variables.'
-                }),
+                body: JSON.stringify({ success: true }),
             };
         }
 
