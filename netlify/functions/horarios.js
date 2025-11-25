@@ -1,8 +1,6 @@
 // netlify/functions/horarios.js
-const fs = require('fs');
-const path = require('path');
-
-const horariosPath = path.join(__dirname, '../../data/horarios.json');
+// NOTE: Netlify Functions don't have persistent filesystem access.
+// This version uses environment variables or returns defaults.
 
 const DEFAULT_HORARIOS = {
     horarioAtencion: {
@@ -22,53 +20,41 @@ const corsHeaders = {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
-// Ensure data directory and file exist
-function ensureHorariosFile() {
-    const dataDir = path.dirname(horariosPath);
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
-    if (!fs.existsSync(horariosPath)) {
-        fs.writeFileSync(horariosPath, JSON.stringify(DEFAULT_HORARIOS, null, 2), 'utf8');
-    }
-}
-
 exports.handler = async (event) => {
     if (event.httpMethod === 'OPTIONS') {
         return { statusCode: 204, headers: corsHeaders, body: '' };
     }
 
     try {
-        ensureHorariosFile();
-
         if (event.httpMethod === 'GET') {
-            // Read horarios
-            const data = fs.readFileSync(horariosPath, 'utf8');
+            // Try to read from environment variable, fallback to defaults
+            let horarios = DEFAULT_HORARIOS;
+
+            if (process.env.HORARIOS_JSON) {
+                try {
+                    horarios = JSON.parse(process.env.HORARIOS_JSON);
+                } catch (e) {
+                    console.error('Failed to parse HORARIOS_JSON env var:', e);
+                }
+            }
+
             return {
                 statusCode: 200,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                body: data,
+                body: JSON.stringify(horarios),
             };
         }
 
         if (event.httpMethod === 'POST') {
-            // Save horarios with backup
-            const newData = JSON.parse(event.body || '{}');
-
-            // Create backup
-            if (fs.existsSync(horariosPath)) {
-                const timestamp = Date.now();
-                const backupPath = path.join(path.dirname(horariosPath), `horarios.backup.${timestamp}.json`);
-                fs.copyFileSync(horariosPath, backupPath);
-            }
-
-            // Write new data
-            fs.writeFileSync(horariosPath, JSON.stringify(newData, null, 2), 'utf8');
-
+            // For now, just acknowledge the POST but explain it can't persist
+            // In the future, this should update via Netlify API or use a database
             return {
                 statusCode: 200,
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ success: true }),
+                body: JSON.stringify({
+                    success: true,
+                    warning: 'Changes are not persisted. Please configure a database or use Netlify environment variables.'
+                }),
             };
         }
 
