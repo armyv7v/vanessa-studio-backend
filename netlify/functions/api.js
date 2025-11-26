@@ -26,7 +26,8 @@ const LOYALTY_MAX_DAYS = 30; // Días máximos entre citas
 const LOYALTY_IDEAL_DAYS = 21; // Ciclo ideal de servicio
 
 // --- QR Validation Configuration ---
-const BASE_URL = 'https://vanessastudioback.netlify.app';
+// URL del frontend donde está la página de validación
+const BASE_URL = process.env.FRONTEND_URL || 'https://vanessa-studiols.pages.dev';
 
 // --- Google OAuth client (user based, not service account) ---
 const getGoogleClient = () => {
