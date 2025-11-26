@@ -574,8 +574,17 @@ exports.handler = async (event) => {
       });
 
       // Generar código de validación y QR
-      const validationCode = generateValidationCode(client.email, date, start);
-      const qrCodeDataURL = await generateQRCode(validationCode);
+      let validationCode = '';
+      let qrCodeDataURL = '';
+
+      try {
+        validationCode = generateValidationCode(client.email, date, start);
+        qrCodeDataURL = await generateQRCode(validationCode);
+      } catch (qrError) {
+        console.error('Error generando QR:', qrError);
+        // Fallback si falla el QR: generar solo código sin imagen
+        validationCode = `VAL-${Date.now()}`;
+      }
 
       const newRow = [
         new Date().toISOString(),
@@ -594,50 +603,70 @@ exports.handler = async (event) => {
         '', // Columna N - Fecha Validación (vacío inicialmente)
       ];
 
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A1`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [newRow] },
-      });
+      try {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId: SHEET_ID,
+          range: `${SHEET_NAME}!A1`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [newRow] },
+        });
+      } catch (sheetError) {
+        console.error('Error guardando en Sheets:', sheetError);
+        return {
+          statusCode: 500,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Error guardando la reserva en la base de datos: ' + sheetError.message })
+        };
+      }
 
       // Actualizar tarjeta de fidelidad
-      const loyaltyUpdate = await updateLoyaltyCard(
-        sheets,
-        client.email,
-        client.name,
-        startTime.toISO()
-      );
+      let loyaltyUpdate = null;
+      try {
+        loyaltyUpdate = await updateLoyaltyCard(
+          sheets,
+          client.email,
+          client.name,
+          startTime.toISO()
+        );
+      } catch (loyaltyError) {
+        console.error('Error actualizando fidelidad:', loyaltyError);
+        // No fallamos la reserva si falla la fidelidad, solo lo logueamos
+      }
 
-      const emailHtml = buildEmailHtml({
-        clientName: client.name,
-        fecha: date,
-        hora: start,
-        duracion: durationMin,
-        telefono: client.phone,
-        serviceName,
-        htmlLink: newEvent.data.htmlLink,
-        loyaltyData: loyaltyUpdate,
-        qrCodeDataURL,
-        validationCode,
-      });
+      try {
+        const emailHtml = buildEmailHtml({
+          clientName: client.name,
+          fecha: date,
+          hora: start,
+          duracion: durationMin,
+          telefono: client.phone,
+          serviceName,
+          htmlLink: newEvent.data.htmlLink,
+          loyaltyData: loyaltyUpdate,
+          qrCodeDataURL,
+          validationCode,
+        });
 
-      const sender = { name: 'Vanessa Nails Studio', email: 'nailsvanessacl@gmail.com' };
+        const sender = { name: 'Vanessa Nails Studio', email: 'nailsvanessacl@gmail.com' };
 
-      await brevoApi.sendTransacEmail({
-        sender,
-        to: [{ email: client.email, name: client.name }],
-        subject: `Confirmacion de reserva - ${serviceName}`,
-        htmlContent: emailHtml,
-      });
-
-      if (OWNER_EMAIL) {
         await brevoApi.sendTransacEmail({
           sender,
-          to: [{ email: OWNER_EMAIL, name: 'Vanessa Nails Studio' }],
-          subject: `Nueva cita - ${serviceName} (${client.name})`,
+          to: [{ email: client.email, name: client.name }],
+          subject: `Confirmacion de reserva - ${serviceName}`,
           htmlContent: emailHtml,
         });
+
+        if (OWNER_EMAIL) {
+          await brevoApi.sendTransacEmail({
+            sender,
+            to: [{ email: OWNER_EMAIL, name: 'Vanessa Nails Studio' }],
+            subject: `Nueva cita - ${serviceName} (${client.name})`,
+            htmlContent: emailHtml,
+          });
+        }
+      } catch (emailError) {
+        console.error('Error enviando emails:', emailError);
+        // No retornamos error al cliente si falla el email, pero lo registramos
       }
 
       return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ success: true, eventId: newEvent.data.id }) };
