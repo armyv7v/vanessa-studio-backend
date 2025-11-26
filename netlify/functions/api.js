@@ -104,7 +104,7 @@ const getLoyaltyCard = async (sheets, email) => {
   };
 };
 
-const updateLoyaltyCard = async (sheets, email, name, appointmentDate) => {
+const updateLoyaltyCard = async (sheets, email, name, appointmentDate, save = true) => {
   const card = await getLoyaltyCard(sheets, email);
   const now = DateTime.fromISO(appointmentDate, { zone: TZ });
 
@@ -168,31 +168,33 @@ const updateLoyaltyCard = async (sheets, email, name, appointmentDate) => {
     history.join(',')
   ];
 
-  // Buscar o crear fila
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SHEET_ID,
-    range: `${LOYALTY_SHEET_NAME}!A:A`,
-  });
-
-  const allEmails = (res.data.values || []).map(row => normalizeEmail(row[0]));
-  const rowIndex = allEmails.indexOf(normalizeEmail(email));
-
-  if (rowIndex >= 0) {
-    // Actualizar fila existente
-    await sheets.spreadsheets.values.update({
+  if (save) {
+    // Buscar o crear fila
+    const res = await sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `${LOYALTY_SHEET_NAME}!A${rowIndex + 1}:H${rowIndex + 1}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [updatedRow] },
+      range: `${LOYALTY_SHEET_NAME}!A:A`,
     });
-  } else {
-    // Agregar nueva fila
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SHEET_ID,
-      range: `${LOYALTY_SHEET_NAME}!A1`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [updatedRow] },
-    });
+
+    const allEmails = (res.data.values || []).map(row => normalizeEmail(row[0]));
+    const rowIndex = allEmails.indexOf(normalizeEmail(email));
+
+    if (rowIndex >= 0) {
+      // Actualizar fila existente
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${LOYALTY_SHEET_NAME}!A${rowIndex + 1}:H${rowIndex + 1}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [updatedRow] },
+      });
+    } else {
+      // Agregar nueva fila
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SHEET_ID,
+        range: `${LOYALTY_SHEET_NAME}!A1`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [updatedRow] },
+      });
+    }
   }
 
   return {
@@ -503,10 +505,7 @@ exports.handler = async (event) => {
           body: JSON.stringify({
             ...reservation,
             clientName: reservation.name, // Alias para frontend
-            loyaltyCard: loyaltyCard ? {
-              stamps: parseInt(loyaltyCard.stamps || '0'),
-              rewards: parseInt(loyaltyCard.rewards || '0')
-            } : null
+            loyaltyCard: loyaltyCard
           })
         };
       }
@@ -717,7 +716,8 @@ exports.handler = async (event) => {
           sheets,
           client.email,
           client.name,
-          startTime.toISO()
+          startTime.toISO(),
+          false // No guardar cambios en la hoja (solo simular para el email)
         );
       } catch (loyaltyError) {
         console.error('Error actualizando fidelidad:', loyaltyError);
