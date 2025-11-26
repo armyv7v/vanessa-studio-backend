@@ -554,6 +554,68 @@ exports.handler = async (event) => {
       return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ busy: busySlots }) };
     }
 
+    // POST /api/validate-attendance - Confirmar asistencia
+    if (event.httpMethod === 'POST' && path.includes('/validate-attendance')) {
+      const { code, adminPin } = JSON.parse(event.body || '{}');
+
+      if (!code) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'C\u00f3digo de validaci\u00f3n requerido' })
+        };
+      }
+
+      // Validar PIN de admin
+      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '1234';
+      if (!adminPin || adminPin !== ADMIN_PIN) {
+        return {
+          statusCode: 401,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
+        };
+      }
+
+      const reservation = await findReservationByCode(sheets, code);
+
+      if (!reservation) {
+        return {
+          statusCode: 404,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'C\u00f3digo de validaci\u00f3n no encontrado' })
+        };
+      }
+
+      if (reservation.attended === 'SI') {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            error: 'Esta cita ya fue validada',
+            validatedAt: reservation.validatedAt
+          })
+        };
+      }
+
+      // Marcar como asistida y actualizar fidelidad
+      const loyaltyUpdate = await markAsAttended(sheets, reservation);
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          message: 'Asistencia confirmada exitosamente',
+          loyalty: {
+            currentStamps: loyaltyUpdate.currentStamps,
+            progress: loyaltyUpdate.progress,
+            rewardAvailable: loyaltyUpdate.rewardAvailable,
+            action: loyaltyUpdate.action
+          }
+        })
+      };
+    }
+
     if (event.httpMethod === 'POST') {
       const data = JSON.parse(event.body || '{}');
       const { client, date, start, durationMin, serviceName, extraCupo } = data;
@@ -735,67 +797,7 @@ exports.handler = async (event) => {
       };
     }
 
-    // POST /api/validate-attendance - Confirmar asistencia
-    if (event.httpMethod === 'POST' && path.includes('/validate-attendance')) {
-      const { code, adminPin } = JSON.parse(event.body || '{}');
 
-      if (!code) {
-        return {
-          statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'C\u00f3digo de validaci\u00f3n requerido' })
-        };
-      }
-
-      // Validar PIN de admin
-      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '1234';
-      if (!adminPin || adminPin !== ADMIN_PIN) {
-        return {
-          statusCode: 401,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
-        };
-      }
-
-      const reservation = await findReservationByCode(sheets, code);
-
-      if (!reservation) {
-        return {
-          statusCode: 404,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'C\u00f3digo de validaci\u00f3n no encontrado' })
-        };
-      }
-
-      if (reservation.attended === 'SI') {
-        return {
-          statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({
-            error: 'Esta cita ya fue validada',
-            validatedAt: reservation.validatedAt
-          })
-        };
-      }
-
-      // Marcar como asistida y actualizar fidelidad
-      const loyaltyUpdate = await markAsAttended(sheets, reservation);
-
-      return {
-        statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify({
-          success: true,
-          message: 'Asistencia confirmada exitosamente',
-          loyalty: {
-            currentStamps: loyaltyUpdate.currentStamps,
-            progress: loyaltyUpdate.progress,
-            rewardAvailable: loyaltyUpdate.rewardAvailable,
-            action: loyaltyUpdate.action
-          }
-        })
-      };
-    }
 
     return { statusCode: 405, headers: corsHeaders, body: JSON.stringify({ error: 'Method Not Allowed' }) };
   } catch (error) {
