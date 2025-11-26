@@ -227,24 +227,13 @@ const generateValidationCode = (email, date, time) => {
 };
 
 /**
- * Genera un QR code como Data URL
+ * Genera un QR code como URL de imagen pública (para compatibilidad con emails)
  */
 const generateQRCode = async (validationCode) => {
   const url = `${BASE_URL}/validar/${validationCode}`;
-  try {
-    const qrDataURL = await QRCode.toDataURL(url, {
-      width: 300,
-      margin: 2,
-      color: {
-        dark: '#d63384',
-        light: '#ffffff'
-      }
-    });
-    return qrDataURL;
-  } catch (error) {
-    console.error('Error generating QR code:', error);
-    return null;
-  }
+  // Usamos api.qrserver.com para asegurar que la imagen cargue en clientes de correo
+  const encodedUrl = encodeURIComponent(url);
+  return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&color=d63384&data=${encodedUrl}`;
 };
 
 /**
@@ -258,6 +247,7 @@ const findReservationByCode = async (sheets, validationCode) => {
 
   const rows = res.data.values || [];
   if (rows.length <= 1) return null;
+
 
   // Buscar en columna K (índice 10) el código de validación
   for (let i = 1; i < rows.length; i++) {
