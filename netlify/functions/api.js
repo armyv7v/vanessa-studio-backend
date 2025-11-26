@@ -231,7 +231,8 @@ const generateValidationCode = (email, date, time) => {
  * Genera un QR code como URL de imagen pública (para compatibilidad con emails)
  */
 const generateQRCode = async (validationCode) => {
-  const url = `${BASE_URL}/validar/${validationCode}`;
+  // Usamos query param (?code=) en lugar de ruta dinámica para evitar 404 en hosting estático
+  const url = `${BASE_URL}/validar?code=${validationCode}`;
   // Usamos api.qrserver.com para asegurar que la imagen cargue en clientes de correo
   const encodedUrl = encodeURIComponent(url);
   return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=10&color=d63384&data=${encodedUrl}`;
