@@ -475,10 +475,10 @@ exports.handler = async (event) => {
     const authClient = getGoogleClient();
     const calendar = google.calendar({ version: 'v3', auth: authClient });
     const sheets = google.sheets({ version: 'v4', auth: authClient });
+    const path = event.path || '';
 
     if (event.httpMethod === 'GET') {
       const { date, email } = event.queryStringParameters || {};
-      const path = event.path || '';
 
       // GET /api/validate-attendance/:code - Obtener detalles de la reserva
       if (path.includes('/validate-attendance/')) {
@@ -764,7 +764,6 @@ exports.handler = async (event) => {
     }
 
     // GET /api/validate-attendance/:code - Obtener info de la cita
-    const path = event.path || '';
     if (event.httpMethod === 'GET' && path.includes('/validate-attendance/')) {
       const code = path.split('/validate-attendance/')[1];
 
