@@ -473,6 +473,38 @@ exports.handler = async (event) => {
 
     if (event.httpMethod === 'GET') {
       const { date, email } = event.queryStringParameters || {};
+      const path = event.path || '';
+
+      // GET /api/validate-attendance/:code - Obtener detalles de la reserva
+      if (path.includes('/validate-attendance/')) {
+        const code = path.split('/').pop();
+
+        if (!code) {
+          return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Código requerido' }) };
+        }
+
+        const reservation = await findReservationByCode(sheets, code);
+
+        if (!reservation) {
+          return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Reserva no encontrada' }) };
+        }
+
+        // Obtener tarjeta de fidelidad del cliente
+        const loyaltyCard = await getLoyaltyCard(sheets, reservation.email);
+
+        return {
+          statusCode: 200,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            ...reservation,
+            clientName: reservation.name, // Alias para frontend
+            loyaltyCard: loyaltyCard ? {
+              stamps: parseInt(loyaltyCard.stamps || '0'),
+              rewards: parseInt(loyaltyCard.rewards || '0')
+            } : null
+          })
+        };
+      }
 
       if (email) {
         const customer = await getLatestCustomerByEmail(sheets, email);
