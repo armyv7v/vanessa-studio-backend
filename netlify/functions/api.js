@@ -241,19 +241,22 @@ const generateQRCode = async (validationCode) => {
 /**
  * Busca una reserva por código de validación
  */
+/**
+ * Busca una reserva por código de validación
+ */
 const findReservationByCode = async (sheets, validationCode) => {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:M`,
+    range: `${SHEET_NAME}!A:N`, // Extend range to N to include ValidatedAt
   });
 
   const rows = res.data.values || [];
   if (rows.length <= 1) return null;
 
 
-  // Buscar en columna K (índice 10) el código de validación
+  // Buscar en columna L (índice 11) el código de validación
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][10] === validationCode) {
+    if (rows[i][11] === validationCode) {
       return {
         rowIndex: i + 1,
         created: rows[i][0] || '',
@@ -266,9 +269,10 @@ const findReservationByCode = async (sheets, validationCode) => {
         duration: rows[i][7] || '',
         eventId: rows[i][8] || '',
         htmlLink: rows[i][9] || '',
-        validationCode: rows[i][10] || '',
-        attended: rows[i][11] || '',
-        validatedAt: rows[i][12] || ''
+        // Index 10 is HtmlLink (duplicate in newRow logic but let's stick to the map)
+        validationCode: rows[i][11] || '',
+        attended: rows[i][12] || '',
+        validatedAt: rows[i][13] || ''
       };
     }
   }
@@ -282,10 +286,11 @@ const findReservationByCode = async (sheets, validationCode) => {
 const markAsAttended = async (sheets, reservation) => {
   const now = new Date().toISOString();
 
-  // Actualizar columnas L (Asistió) y M (Fecha Validación)
+  // Actualizar columnas M (Asistió) y N (Fecha Validación)
+  // M es índice 12, N es índice 13
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!L${reservation.rowIndex}:M${reservation.rowIndex}`,
+    range: `${SHEET_NAME}!M${reservation.rowIndex}:N${reservation.rowIndex}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: {
       values: [['SI', now]]
