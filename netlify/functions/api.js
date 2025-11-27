@@ -380,7 +380,7 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
       <div style="background:#fff5f8;padding:16px;border-radius:8px;margin:12px 0">
         <h3 style="margin:0 0 12px;color:#d63384">${emoji} Tu Tarjeta de Fidelidad</h3>
         <p style="margin:8px 0">${message}</p>
-        <div style="text-align:center;margin:16px 0">
+        <div style="text-align:center;margin:16px 0;white-space:nowrap;overflow-x:auto">
           ${stampCircles}
         </div>
         <div style="background:#d63384;height:8px;border-radius:4px;overflow:hidden;margin:12px 0">
