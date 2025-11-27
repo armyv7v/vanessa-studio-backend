@@ -756,6 +756,18 @@ exports.handler = async (event) => {
           hora: start,
           duracion: durationMin,
           telefono: client.phone,
+          serviceName,
+          htmlLink: newEvent.data.htmlLink,
+          loyaltyData: loyaltyUpdate,
+          qrCodeDataURL,
+          validationCode,
+          isBooking: true
+        });
+
+        const sender = { name: 'Vanessa Nails Studio', email: 'nailsvanessacl@gmail.com' };
+
+        await brevoApi.sendTransacEmail({
+          sender,
           to: [{ email: client.email, name: client.name }],
           subject: `Confirmacion de reserva - ${serviceName}`,
           htmlContent: emailHtml,
