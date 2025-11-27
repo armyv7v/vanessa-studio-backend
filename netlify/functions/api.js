@@ -505,7 +505,7 @@ exports.handler = async (event) => {
     const path = event.path || '';
 
     if (event.httpMethod === 'GET') {
-      const { date, email } = event.queryStringParameters || {};
+      const { date, email, startDate, endDate } = event.queryStringParameters || {};
 
       // GET /api/validate-attendance/:code - Obtener detalles de la reserva
       if (path.includes('/validate-attendance/')) {
@@ -554,17 +554,23 @@ exports.handler = async (event) => {
         return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ card }) };
       }
 
-      if (!date) {
-        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date parameter' }) };
-      }
+      let timeMin, timeMax;
 
-      const startOfDay = DateTime.fromISO(date, { zone: TZ }).startOf('day');
-      const endOfDay = startOfDay.plus({ days: 1 });
+      if (startDate && endDate) {
+        timeMin = DateTime.fromISO(startDate, { zone: TZ }).startOf('day').toISO();
+        timeMax = DateTime.fromISO(endDate, { zone: TZ }).endOf('day').toISO();
+      } else if (date) {
+        const startOfDay = DateTime.fromISO(date, { zone: TZ }).startOf('day');
+        timeMin = startOfDay.toISO();
+        timeMax = startOfDay.plus({ days: 1 }).toISO();
+      } else {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing date or startDate/endDate parameters' }) };
+      }
 
       const res = await calendar.events.list({
         calendarId: CALENDAR_ID,
-        timeMin: startOfDay.toISO(),
-        timeMax: endOfDay.toISO(),
+        timeMin: timeMin,
+        timeMax: timeMax,
         timeZone: TZ,
         singleEvents: true,
         orderBy: 'startTime',
