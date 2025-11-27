@@ -311,7 +311,7 @@ const markAsAttended = async (sheets, reservation) => {
 };
 
 
-const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceName, htmlLink, loyaltyData, qrCodeDataURL, validationCode }) => {
+const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceName, htmlLink, loyaltyData, qrCodeDataURL, validationCode, isBooking = false }) => {
   const bankList = BANK_LINES.map((line) => `<li>${line}</li>`).join('');
   const whatsLink = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(
     `Hola Vanessa, te envio el comprobante de reserva. Mi nombre es ${clientName}`,
@@ -329,9 +329,25 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
     // Generar círculos de sellos
     const stampCircles = Array.from({ length: LOYALTY_GOAL }, (_, i) => {
       const filled = i < currentStamps;
-      return `<div style="width:40px;height:40px;border-radius:50%;border:3px solid ${filled ? '#d63384' : '#ddd'};background:${filled ? '#d63384' : 'white'};display:inline-block;margin:0 4px;position:relative">
-        ${filled ? '<span style="color:white;font-size:20px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">✓</span>' : ''}
-      </div>`;
+      const isPending = isBooking && i === currentStamps - 1 && filled; // El último sello es el pendiente si es reserva
+
+      let circleStyle = `width:40px;height:40px;border-radius:50%;display:inline-block;margin:0 4px;position:relative;`;
+      let content = '';
+
+      if (isPending) {
+        // Estilo para sello pendiente (booking)
+        circleStyle += `border:3px dashed #d63384;background:#fff5f8;`;
+        content = `<span style="color:#d63384;font-size:16px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">⏳</span>`;
+      } else if (filled) {
+        // Estilo para sello confirmado
+        circleStyle += `border:3px solid #d63384;background:#d63384;`;
+        content = `<span style="color:white;font-size:20px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">✓</span>`;
+      } else {
+        // Estilo para sello vacío
+        circleStyle += `border:3px solid #ddd;background:white;`;
+      }
+
+      return `<div style="${circleStyle}">${content}</div>`;
     }).join('');
 
     // Mensaje según la acción
@@ -339,19 +355,23 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
     let emoji = '';
 
     if (action === 'reward_unlocked') {
-      message = `🎉 ¡FELICITACIONES! Has completado tu tarjeta de fidelidad. Tienes un <b>25% de descuento</b> disponible para tu próxima cita.`;
+      message = `🎉 ¡FELICITACIONES! Al validar esta cita completarás tu tarjeta. Tendrás un <b>25% de descuento</b> disponible.`;
       emoji = '🎉';
     } else if (action === 'penalty_applied') {
-      message = `⚠️ Han pasado más de 30 días desde tu última cita (${daysElapsed} días). Esta cita NO suma sello, pero mantiene tu progreso de ${currentStamps} sellos. Tu próxima cita volverá a sumar normalmente.`;
+      message = `⚠️ Han pasado más de 30 días desde tu última cita (${daysElapsed} días). Esta cita NO suma sello, pero mantiene tu progreso.`;
       emoji = '⚠️';
     } else if (action === 'penalty_served') {
-      message = `✅ Has cumplido tu penalidad. Esta cita NO suma sello, pero tu próxima cita volverá a acumular normalmente. Mantienes tu progreso de ${currentStamps} sellos.`;
+      message = `✅ Estás cumpliendo tu penalidad. Esta cita NO suma sello, pero reactiva tu tarjeta para la próxima.`;
       emoji = '✅';
     } else if (action === 'first_stamp') {
-      message = `💅 ¡Bienvenida al programa de fidelidad! Esta es tu primera cita registrada.`;
+      message = isBooking
+        ? `💅 ¡Bienvenida! Esta cita sumará tu <b>primer sello</b> al ser validada.`
+        : `💅 ¡Bienvenida al programa de fidelidad! Esta es tu primera cita registrada.`;
       emoji = '✨';
     } else {
-      message = `💅 ¡Excelente! Llevas ${currentStamps} de ${LOYALTY_GOAL} citas completadas (${progress}%).`;
+      message = isBooking
+        ? `💅 ¡Excelente! Con esta cita llegarás a ${currentStamps} de ${LOYALTY_GOAL} sellos.`
+        : `💅 ¡Excelente! Llevas ${currentStamps} de ${LOYALTY_GOAL} citas completadas (${progress}%).`;
       emoji = '💪';
     }
 
@@ -369,6 +389,11 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
         <p style="font-size:13px;color:#666;margin:8px 0">
           <b>Progreso:</b> ${currentStamps}/${LOYALTY_GOAL} citas (${progress}%)
         </p>
+        ${isBooking ? `
+          <p style="font-size:12px;color:#d63384;margin:8px 0;text-align:center">
+            <i>⏳ El sello se confirmará al escanear el QR en el local</i>
+          </p>
+        ` : ''}
         ${currentStamps < LOYALTY_GOAL ? `
           <p style="font-size:13px;color:#d63384;margin:8px 0">
             <b>⏰ Importante:</b> Agenda tu próxima cita antes del <b>${deadlineFormatted}</b> para mantener tu progreso.
@@ -731,17 +756,6 @@ exports.handler = async (event) => {
           hora: start,
           duracion: durationMin,
           telefono: client.phone,
-          serviceName,
-          htmlLink: newEvent.data.htmlLink,
-          loyaltyData: loyaltyUpdate,
-          qrCodeDataURL,
-          validationCode,
-        });
-
-        const sender = { name: 'Vanessa Nails Studio', email: 'nailsvanessacl@gmail.com' };
-
-        await brevoApi.sendTransacEmail({
-          sender,
           to: [{ email: client.email, name: client.name }],
           subject: `Confirmacion de reserva - ${serviceName}`,
           htmlContent: emailHtml,
