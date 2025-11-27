@@ -331,13 +331,13 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
       const filled = i < currentStamps;
       const isPending = isBooking && i === currentStamps - 1 && filled; // El último sello es el pendiente si es reserva
 
-      let circleStyle = `width:40px;height:40px;border-radius:50%;display:inline-block;margin:0 4px;position:relative;`;
+      let circleStyle = `width:40px;height:40px;border-radius:50%;display:inline-block;margin:0 4px;position:relative;vertical-align:middle;box-sizing:border-box;`;
       let content = '';
 
       if (isPending) {
         // Estilo para sello pendiente (booking)
         circleStyle += `border:3px dashed #d63384;background:#fff5f8;`;
-        content = `<span style="color:#d63384;font-size:16px;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">⏳</span>`;
+        content = `<span style="color:#d63384;font-size:20px;line-height:1;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)">⏳</span>`;
       } else if (filled) {
         // Estilo para sello confirmado
         circleStyle += `border:3px solid #d63384;background:#d63384;`;
