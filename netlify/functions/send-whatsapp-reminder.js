@@ -15,6 +15,11 @@ const CORS_HEADERS = {
 function formatReminderMessage({ clientName, diffDays, type, loyaltyData }) {
     const isUrgent = type === 'REMINDER28';
 
+    // Link directo a WhatsApp de Vanessa Nails Studio
+    const whatsappNumber = '56991744464';
+    const whatsappMessage = encodeURIComponent(`Hola Vanessa 💖 Quiero agendar mi mantenimiento. Soy ${clientName}.`);
+    const whatsappLink = `https://wa.me/${whatsappNumber}?text=${whatsappMessage}`;
+
     let message = `💅 ¡Hola ${clientName}!\n\n`;
 
     if (isUrgent) {
@@ -40,8 +45,8 @@ function formatReminderMessage({ clientName, diffDays, type, loyaltyData }) {
         }
     }
 
-    message += `¿Agendamos tu cita?\n`;
-    message += `Responde a este mensaje para reservar 💖\n\n`;
+    message += `📱 *Agenda tu cita aquí:*\n`;
+    message += `${whatsappLink}\n\n`;
     message += `_- Vanessa Nails Studio_`;
 
     return message;
