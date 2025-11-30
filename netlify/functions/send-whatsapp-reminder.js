@@ -20,7 +20,8 @@ function formatReminderMessage({ clientName, diffDays, type, loyaltyData }) {
     const whatsappMessage = encodeURIComponent(`Hola Vanessa 💖 Quiero agendar mi mantenimiento. Soy ${clientName}.`);
     const whatsappLink = `https://wa.me/${whatsappNumber}?text=${whatsappMessage}`;
 
-    let message = `💅 ¡Hola ${clientName}!\n\n`;
+    let message = `🤖 _Este es un mensaje automático_\n\n`;
+    message += `💅 ¡Hola ${clientName}!\n\n`;
 
     if (isUrgent) {
         message += `Ya van *${diffDays} días* desde tu última visita. Nos encantaría volver a verte pronto 💗\n\n`;
@@ -45,7 +46,7 @@ function formatReminderMessage({ clientName, diffDays, type, loyaltyData }) {
         }
     }
 
-    message += `📱 *Agenda tu cita aquí:*\n`;
+    message += `📱 *Agenda tu cita a nuestro WhatsApp de siempre aquí:*\n`;
     message += `${whatsappLink}\n\n`;
     message += `_- Vanessa Nails Studio_`;
 
