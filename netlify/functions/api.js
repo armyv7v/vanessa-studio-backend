@@ -665,10 +665,21 @@ exports.handler = async (event) => {
       });
 
       if ((conflictRes.data.items || []).length > 0) {
+        // Log detailed conflict information for debugging
+        const conflictDetails = conflictRes.data.items.map(item =>
+          `"${item.summary || 'Sin título'}" (${item.start.dateTime || item.start.date} - ${item.end.dateTime || item.end.date})`
+        ).join(', ');
+
+        console.error(`[BOOKING_CONFLICT] Intento de reserva: ${startTime.toISO()} - ${endTime.toISO()}`);
+        console.error(`[BOOKING_CONFLICT] Eventos conflictivos encontrados: ${conflictDetails}`);
+
         return {
           statusCode: 409,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'El horario seleccionado ya no esta disponible. Por favor, elige otro.' }),
+          body: JSON.stringify({
+            error: `El horario seleccionado ya no esta disponible. Conflicto con: ${conflictDetails}. Por favor, elige otro.`,
+            conflicts: conflictRes.data.items // Return full details if client wants to use them
+          }),
         };
       }
 
