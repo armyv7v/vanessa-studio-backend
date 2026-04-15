@@ -29,6 +29,21 @@ const brevoClient = SibApiV3Sdk.ApiClient.instance;
 const apiKey = brevoClient.authentications['api-key'];
 apiKey.apiKey = process.env.BREVO_API_KEY;
 const brevoApi = new SibApiV3Sdk.TransactionalEmailsApi();
+const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'nailsvanessacl@gmail.com';
+const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'Vanessa Nails Studio';
+
+function extractBrevoErrorDetails(error) {
+    const response = error?.response || error?.response?.res || null;
+    const status = response?.status || error?.statusCode || error?.status || null;
+    const body = response?.text || response?.body || error?.body || error?.message || String(error);
+
+    return {
+        status,
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+        message: error?.message || null,
+        stack: error?.stack || null,
+    };
+}
 
 const buildReminderEmailHtml = ({ clientName, daysRemaining, currentStamps, deadlineDate, type }) => {
     const deadline = DateTime.fromISO(deadlineDate, { zone: TZ });
@@ -133,7 +148,7 @@ exports.handler = async (event) => {
                 });
 
                 await brevoApi.sendTransacEmail({
-                    sender: { name: 'Vanessa Nails Studio', email: 'nailsvanessacl@gmail.com' },
+                    sender: { name: BREVO_SENDER_NAME, email: BREVO_SENDER_EMAIL },
                     to: [{ email, name }],
                     subject: reminderType === 'day_20'
                         ? '💅 ¡Es hora de renovar tus uñas!'
@@ -154,7 +169,7 @@ exports.handler = async (event) => {
             })
         };
     } catch (error) {
-        console.error('Error in loyalty reminders:', error);
+        console.error('Error in loyalty reminders:', extractBrevoErrorDetails(error));
         return {
             statusCode: 500,
             body: JSON.stringify({ error: error.message })
