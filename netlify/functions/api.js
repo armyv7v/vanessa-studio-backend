@@ -684,7 +684,7 @@ exports.handler = async (event) => {
       }
 
       // Validar PIN de admin
-      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '1234';
+      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
       if (!adminPin || adminPin !== ADMIN_PIN) {
         return {
           statusCode: 401,
