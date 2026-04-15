@@ -325,6 +325,44 @@ const markAsAttended = async (sheets, reservation) => {
   return loyaltyUpdate;
 };
 
+const listReservationsByRange = async (sheets, startDate, endDate) => {
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!A:N`,
+  });
+
+  const rows = res.data.values || [];
+  if (rows.length <= 1) return [];
+
+  const start = DateTime.fromISO(startDate, { zone: TZ }).startOf('day');
+  const end = DateTime.fromISO(endDate, { zone: TZ }).endOf('day');
+
+  return rows
+    .slice(1)
+    .map((row, index) => ({
+      rowIndex: index + 2,
+      created: row[0] || '',
+      name: row[1] || '',
+      email: row[2] || '',
+      phone: row[3] || '',
+      service: row[4] || '',
+      startLocal: row[5] || '',
+      endLocal: row[6] || '',
+      duration: row[7] || '',
+      eventId: row[8] || '',
+      htmlLink: row[9] || '',
+      validationCode: row[11] || '',
+      attended: row[12] || '',
+      validatedAt: row[13] || '',
+    }))
+    .filter((reservation) => reservation.startLocal && reservation.validationCode)
+    .filter((reservation) => {
+      const reservationDate = DateTime.fromISO(reservation.startLocal, { zone: TZ });
+      return reservationDate.isValid && reservationDate >= start && reservationDate <= end;
+    })
+    .sort((a, b) => DateTime.fromISO(a.startLocal, { zone: TZ }).toMillis() - DateTime.fromISO(b.startLocal, { zone: TZ }).toMillis());
+};
+
 
 const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceName, htmlLink, loyaltyData, qrCodeDataURL, validationCode, isBooking = false }) => {
   const bankList = BANK_LINES.map((line) => `<li>${line}</li>`).join('');
@@ -521,6 +559,40 @@ exports.handler = async (event) => {
 
     if (event.httpMethod === 'GET') {
       const { date, email, startDate, endDate } = event.queryStringParameters || {};
+
+      if (path.includes('/validate-attendance-list')) {
+        if (!startDate || !endDate) {
+          return {
+            statusCode: 400,
+            headers: corsHeaders,
+            body: JSON.stringify({ error: 'startDate y endDate son requeridos' })
+          };
+        }
+
+        const reservations = await listReservationsByRange(sheets, startDate, endDate);
+        return {
+          statusCode: 200,
+          headers: corsHeaders,
+          body: JSON.stringify({
+            reservations: reservations.map((reservation) => {
+              const startLocal = DateTime.fromISO(reservation.startLocal, { zone: TZ });
+              return {
+                code: reservation.validationCode,
+                name: reservation.name,
+                email: reservation.email,
+                phone: reservation.phone,
+                service: reservation.service,
+                startLocal: reservation.startLocal,
+                dateLabel: startLocal.isValid ? startLocal.toFormat('dd/MM/yyyy') : '',
+                timeLabel: startLocal.isValid ? startLocal.toFormat('HH:mm') : '',
+                attended: reservation.attended === 'SI',
+                validatedAt: reservation.validatedAt || '',
+                htmlLink: reservation.htmlLink,
+              };
+            })
+          })
+        };
+      }
 
       // GET /api/validate-attendance/:code - Obtener detalles de la reserva
       if (path.includes('/validate-attendance/')) {
