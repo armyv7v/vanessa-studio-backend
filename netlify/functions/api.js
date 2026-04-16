@@ -625,7 +625,7 @@ exports.handler = async (event) => {
       if (email) {
         const customer = await getLatestCustomerByEmail(sheets, email);
         if (!customer) {
-          return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Cliente no encontrado' }) };
+          return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ customer: null }) };
         }
         return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ customer }) };
       }
