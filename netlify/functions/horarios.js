@@ -119,8 +119,14 @@ async function readLocalConfig() {
 }
 
 async function writeLocalConfig(data) {
-    await fs.mkdir(path.dirname(LOCAL_DATA_FILE), { recursive: true });
-    await fs.writeFile(LOCAL_DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+    try {
+        await fs.mkdir(path.dirname(LOCAL_DATA_FILE), { recursive: true });
+        await fs.writeFile(LOCAL_DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
+        return { localError: null };
+    } catch (error) {
+        console.warn('Failed writing horarios locally:', error.message);
+        return { localError: error };
+    }
 }
 
 async function readConfig() {
@@ -148,8 +154,8 @@ async function writeConfig(data) {
         console.warn('Failed writing horarios to Netlify Blobs, saving locally instead:', error.message);
     }
 
-    await writeLocalConfig(data);
-    return { blobError };
+    const { localError } = await writeLocalConfig(data);
+    return { blobError, localError };
 }
 
 exports.handler = async (event) => {
@@ -170,7 +176,7 @@ exports.handler = async (event) => {
         if (event.httpMethod === 'POST') {
             const payload = event.body ? JSON.parse(event.body) : {};
             const sanitized = sanitizeConfig(payload);
-            const { blobError } = await writeConfig(sanitized);
+            const { blobError, localError } = await writeConfig(sanitized);
 
             return {
                 statusCode: 200,
@@ -179,7 +185,11 @@ exports.handler = async (event) => {
                     success: true,
                     data: sanitized,
                     persistedToBlobs: !blobError,
-                    warning: blobError ? 'Saved locally but failed to persist in Netlify Blobs.' : null,
+                    warning: blobError
+                        ? 'Saved without Netlify Blobs persistence.'
+                        : localError
+                            ? 'Persisted remotely, but local fallback write was skipped in this environment.'
+                            : null,
                 }),
             };
         }
