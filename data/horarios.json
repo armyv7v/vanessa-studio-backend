@@ -25,5 +25,8 @@
             "14:00"
         ],
         "domingo": []
-    }
+    },
+    "disabledDays": [],
+    "disabledDates": [],
+    "blackoutRanges": []
 }
