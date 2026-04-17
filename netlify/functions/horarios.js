@@ -1,5 +1,6 @@
 // netlify/functions/horarios.js
 
+const { google } = require('googleapis');
 const { getStore } = require('@netlify/blobs');
 const fs = require('fs/promises');
 const path = require('path');
@@ -27,6 +28,8 @@ const corsHeaders = {
 
 const LOCAL_DATA_FILE = path.join(process.cwd(), 'data', 'horarios.json');
 const BLOB_KEY = 'horarios/config.json';
+const SHEET_ID = '1aE4dnWZQjEJWAMaDEfDRpACVUDU8_F9-fzd_2mSQQeM';
+const CONFIG_SHEET_NAME = 'ConfiguracionHorarios';
 
 function isValidTime(value) {
     return typeof value === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
@@ -109,6 +112,73 @@ function sanitizeConfig(payload) {
     };
 }
 
+function getGoogleClient() {
+    const {
+        GOOGLE_OAUTH_CLIENT_ID,
+        GOOGLE_OAUTH_CLIENT_SECRET,
+        GOOGLE_OAUTH_REFRESH_TOKEN,
+    } = process.env;
+
+    if (!GOOGLE_OAUTH_CLIENT_ID || !GOOGLE_OAUTH_CLIENT_SECRET || !GOOGLE_OAUTH_REFRESH_TOKEN) {
+        throw new Error('Google OAuth env vars missing for horarios config persistence.');
+    }
+
+    const oauthClient = new google.auth.OAuth2(
+        GOOGLE_OAUTH_CLIENT_ID,
+        GOOGLE_OAUTH_CLIENT_SECRET,
+    );
+
+    oauthClient.setCredentials({ refresh_token: GOOGLE_OAUTH_REFRESH_TOKEN });
+    return oauthClient;
+}
+
+async function getSheetsClient() {
+    return google.sheets({ version: 'v4', auth: getGoogleClient() });
+}
+
+async function ensureConfigSheetExists(sheets) {
+    const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID });
+    const exists = (spreadsheet.data.sheets || []).some((sheet) => sheet.properties?.title === CONFIG_SHEET_NAME);
+
+    if (!exists) {
+        await sheets.spreadsheets.batchUpdate({
+            spreadsheetId: SHEET_ID,
+            requestBody: {
+                requests: [{ addSheet: { properties: { title: CONFIG_SHEET_NAME } } }],
+            },
+        });
+    }
+}
+
+async function readSheetConfig() {
+    const sheets = await getSheetsClient();
+    await ensureConfigSheetExists(sheets);
+
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${CONFIG_SHEET_NAME}!A1`,
+    });
+
+    const raw = res.data.values?.[0]?.[0];
+    if (!raw) {
+        return null;
+    }
+
+    return JSON.parse(raw);
+}
+
+async function writeSheetConfig(data) {
+    const sheets = await getSheetsClient();
+    await ensureConfigSheetExists(sheets);
+
+    await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${CONFIG_SHEET_NAME}!A1`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [[JSON.stringify(data)]] },
+    });
+}
+
 async function readLocalConfig() {
     try {
         const raw = await fs.readFile(LOCAL_DATA_FILE, 'utf8');
@@ -131,6 +201,15 @@ async function writeLocalConfig(data) {
 
 async function readConfig() {
     try {
+        const data = await readSheetConfig();
+        if (data) {
+            return sanitizeConfig(data);
+        }
+    } catch (error) {
+        console.warn('Falling back from Google Sheets horarios config:', error.message);
+    }
+
+    try {
         const store = getStore({ name: 'vanessa-studio-config' });
         const raw = await store.get(BLOB_KEY, { type: 'text' });
         if (raw) {
@@ -144,7 +223,15 @@ async function readConfig() {
 }
 
 async function writeConfig(data) {
+    let sheetError = null;
     let blobError = null;
+
+    try {
+        await writeSheetConfig(data);
+    } catch (error) {
+        sheetError = error;
+        console.warn('Failed writing horarios to Google Sheets config store:', error.message);
+    }
 
     try {
         const store = getStore({ name: 'vanessa-studio-config' });
@@ -155,7 +242,7 @@ async function writeConfig(data) {
     }
 
     const { localError } = await writeLocalConfig(data);
-    return { blobError, localError };
+    return { sheetError, blobError, localError };
 }
 
 exports.handler = async (event) => {
@@ -176,7 +263,11 @@ exports.handler = async (event) => {
         if (event.httpMethod === 'POST') {
             const payload = event.body ? JSON.parse(event.body) : {};
             const sanitized = sanitizeConfig(payload);
-            const { blobError, localError } = await writeConfig(sanitized);
+            const { sheetError, blobError, localError } = await writeConfig(sanitized);
+
+            if (sheetError) {
+                throw sheetError;
+            }
 
             return {
                 statusCode: 200,
@@ -184,10 +275,9 @@ exports.handler = async (event) => {
                 body: JSON.stringify({
                     success: true,
                     data: sanitized,
+                    persistedToSheets: true,
                     persistedToBlobs: !blobError,
-                    warning: blobError
-                        ? 'Saved without Netlify Blobs persistence.'
-                        : localError
+                    warning: localError
                             ? 'Persisted remotely, but local fallback write was skipped in this environment.'
                             : null,
                 }),
