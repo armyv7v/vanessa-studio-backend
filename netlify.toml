@@ -4,3 +4,6 @@
 [dev]
   functions = "netlify/functions"
   port = 8888
+
+[functions."expire-pending-payments"]
+  schedule = "*/15 * * * *"

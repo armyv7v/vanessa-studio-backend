@@ -5,6 +5,14 @@ const { DateTime } = require('luxon');
 const SibApiV3Sdk = require('sib-api-v3-sdk');
 const QRCode = require('qrcode');
 const crypto = require('crypto');
+const {
+  PAYMENT_STATUS,
+  SHEET_RESERVATIONS_RANGE,
+  buildReservationRecord,
+  getPaymentExpirationIso,
+  confirmReservationPayment,
+  expirePendingReservations,
+} = require('./lib/reservation-payments');
 
 // --- Configuration ---
 const CALENDAR_ID = '64693698ebab23975e6f5d11f9f3b170a6d11b9a19ebb459e1486314ee930ebf@group.calendar.google.com';
@@ -265,33 +273,15 @@ const generateQRCode = async (validationCode) => {
 const findReservationByCode = async (sheets, validationCode) => {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:N`, // Extend range to N to include ValidatedAt
+    range: `${SHEET_NAME}!${SHEET_RESERVATIONS_RANGE}`,
   });
 
   const rows = res.data.values || [];
   if (rows.length <= 1) return null;
 
-
-  // Buscar en columna L (índice 11) el código de validación
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][11] === validationCode) {
-      return {
-        rowIndex: i + 1,
-        created: rows[i][0] || '',
-        name: rows[i][1] || '',
-        email: rows[i][2] || '',
-        phone: rows[i][3] || '',
-        service: rows[i][4] || '',
-        startLocal: rows[i][5] || '',
-        endLocal: rows[i][6] || '',
-        duration: rows[i][7] || '',
-        eventId: rows[i][8] || '',
-        htmlLink: rows[i][9] || '',
-        // Index 10 is HtmlLink (duplicate in newRow logic but let's stick to the map)
-        validationCode: rows[i][11] || '',
-        attended: rows[i][12] || '',
-        validatedAt: rows[i][13] || ''
-      };
+      return buildReservationRecord(rows[i], i + 1, TZ);
     }
   }
 
@@ -329,7 +319,7 @@ const markAsAttended = async (sheets, reservation) => {
 const listReservationsByRange = async (sheets, startDate, endDate) => {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:N`,
+    range: `${SHEET_NAME}!${SHEET_RESERVATIONS_RANGE}`,
   });
 
   const rows = res.data.values || [];
@@ -340,22 +330,7 @@ const listReservationsByRange = async (sheets, startDate, endDate) => {
 
   return rows
     .slice(1)
-    .map((row, index) => ({
-      rowIndex: index + 2,
-      created: row[0] || '',
-      name: row[1] || '',
-      email: row[2] || '',
-      phone: row[3] || '',
-      service: row[4] || '',
-      startLocal: row[5] || '',
-      endLocal: row[6] || '',
-      duration: row[7] || '',
-      eventId: row[8] || '',
-      htmlLink: row[9] || '',
-      validationCode: row[11] || '',
-      attended: row[12] || '',
-      validatedAt: row[13] || '',
-    }))
+    .map((row, index) => buildReservationRecord(row, index + 2, TZ))
     .filter((reservation) => reservation.startLocal && reservation.validationCode)
     .filter((reservation) => {
       const reservationDate = DateTime.fromISO(reservation.startLocal, { zone: TZ });
@@ -368,7 +343,7 @@ const listReservationsByRange = async (sheets, startDate, endDate) => {
 const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceName, htmlLink, loyaltyData, qrCodeDataURL, validationCode, isBooking = false }) => {
   const bankList = BANK_LINES.map((line) => `<li>${line}</li>`).join('');
   const whatsLink = `https://wa.me/${WHATSAPP_PHONE}?text=${encodeURIComponent(
-    `Hola Vanessa, te envio el comprobante de reserva. Mi nombre es ${clientName}`,
+    `Hola Vanessa, te envio el comprobante de reserva. Mi nombre es ${clientName}. Codigo de reserva: ${validationCode}`,
   )}`;
 
   // Construir sección de tarjeta de fidelidad
@@ -500,6 +475,7 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
         <p>Envianos el comprobante por WhatsApp:
           <a href="${whatsLink}" style="color:#d63384;font-weight:bold;text-decoration:none">Enviar comprobante</a>
         </p>
+        <p>Codigo de reserva para tu comprobante: <b>${validationCode}</b></p>
         <p>Si el pago no se confirma dentro de las proximas <b>24 horas</b>, la hora se liberara automaticamente.</p>
         <p>Si faltas a tu hora, no hay devolucion del abono. Puedes reagendar con el mismo abono avisando minimo 24 horas antes.</p>
         <p style="font-size:12px;color:#666;margin-top:18px">
@@ -571,7 +547,7 @@ exports.handler = async (event) => {
           };
         }
 
-        const reservations = await listReservationsByRange(sheets, startDate, endDate);
+      const reservations = await listReservationsByRange(sheets, startDate, endDate);
         return {
           statusCode: 200,
           headers: corsHeaders,
@@ -589,10 +565,33 @@ exports.handler = async (event) => {
                 timeLabel: startLocal.isValid ? startLocal.toFormat('HH:mm') : '',
                 attended: reservation.attended === 'SI',
                 validatedAt: reservation.validatedAt || '',
+                paymentStatus: reservation.paymentStatus,
+                paymentConfirmedAt: reservation.paymentConfirmedAt || '',
+                paymentExpiresAt: reservation.paymentExpiresAt || '',
+                releasedAt: reservation.releasedAt || '',
+                releaseReason: reservation.releaseReason || '',
+                isExpired: reservation.isExpired,
                 htmlLink: reservation.htmlLink,
               };
             })
           })
+        };
+      }
+
+      if (path.includes('/payment-reservations')) {
+        if (!startDate || !endDate) {
+          return {
+            statusCode: 400,
+            headers: corsHeaders,
+            body: JSON.stringify({ error: 'startDate y endDate son requeridos' })
+          };
+        }
+
+        const reservations = await listReservationsByRange(sheets, startDate, endDate);
+        return {
+          statusCode: 200,
+          headers: corsHeaders,
+          body: JSON.stringify({ reservations })
         };
       }
 
@@ -716,6 +715,14 @@ exports.handler = async (event) => {
         };
       }
 
+      if (reservation.paymentStatus !== PAYMENT_STATUS.CONFIRMED) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'No se puede validar asistencia mientras el pago del abono no este confirmado.' })
+        };
+      }
+
       // Marcar como asistida y actualizar fidelidad
       const loyaltyUpdate = await markAsAttended(sheets, reservation);
 
@@ -731,6 +738,115 @@ exports.handler = async (event) => {
             rewardAvailable: loyaltyUpdate.rewardAvailable,
             action: loyaltyUpdate.action
           }
+        })
+      };
+    }
+
+    if (event.httpMethod === 'POST' && path.includes('/confirm-payment')) {
+      const { code, adminPin } = JSON.parse(event.body || '{}');
+
+      if (!code) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Codigo de reserva requerido' })
+        };
+      }
+
+      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
+      if (!adminPin || adminPin !== ADMIN_PIN) {
+        return {
+          statusCode: 401,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
+        };
+      }
+
+      const reservation = await findReservationByCode(sheets, code);
+
+      if (!reservation) {
+        return {
+          statusCode: 404,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Reserva no encontrada' })
+        };
+      }
+
+      if (reservation.paymentStatus === PAYMENT_STATUS.CONFIRMED) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Esta reserva ya tiene el pago confirmado', paymentConfirmedAt: reservation.paymentConfirmedAt || '' })
+        };
+      }
+
+      if (reservation.paymentStatus === PAYMENT_STATUS.EXPIRED || reservation.paymentStatus === PAYMENT_STATUS.CANCELLED) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'No se puede confirmar el pago de una reserva liberada o cancelada' })
+        };
+      }
+
+      if (reservation.isExpired) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'La reserva ya vencio y debe liberarse; no puede confirmarse fuera del plazo de 24 horas.' })
+        };
+      }
+
+      const nowIso = DateTime.now().setZone(TZ).toISO();
+      const updatedReservation = await confirmReservationPayment({
+        sheets,
+        spreadsheetId: SHEET_ID,
+        sheetName: SHEET_NAME,
+        reservation,
+        nowIso,
+      });
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          message: 'Pago confirmado correctamente',
+          reservation: updatedReservation,
+        })
+      };
+    }
+
+    if (event.httpMethod === 'POST' && path.includes('/expire-pending-payments')) {
+      const { adminPin } = JSON.parse(event.body || '{}');
+      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
+
+      if (!adminPin || adminPin !== ADMIN_PIN) {
+        return {
+          statusCode: 401,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
+        };
+      }
+
+      const result = await expirePendingReservations({
+        sheets,
+        calendar,
+        spreadsheetId: SHEET_ID,
+        sheetName: SHEET_NAME,
+        calendarId: CALENDAR_ID,
+        tz: TZ,
+      });
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          message: result.expiredCount > 0
+            ? `Se liberaron ${result.expiredCount} reservas vencidas.`
+            : 'No habia reservas pendientes vencidas para liberar.',
+          expiredCount: result.expiredCount,
+          reservations: result.expiredReservations,
         })
       };
     }
@@ -807,8 +923,11 @@ exports.handler = async (event) => {
         validationCode = `VAL-${Date.now()}`;
       }
 
+      const createdAtIso = DateTime.now().setZone(TZ).toISO();
+      const paymentExpiresAt = getPaymentExpirationIso(createdAtIso, TZ);
+
       const newRow = [
-        new Date().toISOString(),
+        createdAtIso,
         client.name,
         client.email,
         client.phone,
@@ -822,6 +941,11 @@ exports.handler = async (event) => {
         validationCode, // Columna L
         '', // Columna M - Asistió (vacío inicialmente)
         '', // Columna N - Fecha Validación (vacío inicialmente)
+        PAYMENT_STATUS.PENDING, // Columna O - Estado de pago
+        '', // Columna P - Fecha de confirmacion de pago
+        paymentExpiresAt, // Columna Q - Fecha limite de pago
+        '', // Columna R - Fecha de liberacion
+        '', // Columna S - Motivo de liberacion
       ];
 
       try {
@@ -899,7 +1023,17 @@ exports.handler = async (event) => {
         // No retornamos error al cliente si falla el email, pero lo registramos
       }
 
-      return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ success: true, eventId: newEvent.data.id }) };
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          eventId: newEvent.data.id,
+          validationCode,
+          paymentStatus: PAYMENT_STATUS.PENDING,
+          paymentExpiresAt,
+        })
+      };
     }
 
     // GET /api/validate-attendance/:code - Obtener info de la cita
