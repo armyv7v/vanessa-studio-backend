@@ -493,7 +493,7 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
         
         <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
         <h3 style="margin:10px 0 6px">Condiciones de reserva</h3>
-        <p>Para apartar tu hora debes enviar una reserva de <b>$5.000</b> pesos, la cual se descuenta del valor total del servicio.</p>
+        <p>Para apartar tu hora debes enviar una reserva de <b>$10.000</b> pesos, la cual se descuenta del valor total del servicio.</p>
         <p>Transferir a:</p>
         <ul style="margin:0 0 10px 18px;padding:0">${bankList}</ul>
         <p>Envianos el comprobante por WhatsApp:
