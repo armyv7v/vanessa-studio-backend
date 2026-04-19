@@ -13,6 +13,7 @@ const SHEET_NAME = 'Reservas';
 const TZ = 'America/Santiago';
 const OWNER_EMAIL = 'nailsvanessacl@gmail.com';
 const WHATSAPP_PHONE = '56991744464';
+const DEPOSIT_AMOUNT = 10000;
 const BANK_LINES = [
   'VANESSA MORALES - Cuenta RUT 27774310-8 - Banco Estado',
   'VANESSA MORALES - Cuenta Corriente 12700182876 - Banco Estado',
@@ -493,12 +494,13 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
         
         <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
         <h3 style="margin:10px 0 6px">Condiciones de reserva</h3>
-        <p>Para apartar tu hora debes enviar una reserva de <b>$10.000</b> pesos, la cual se descuenta del valor total del servicio.</p>
+        <p>Para apartar tu hora debes enviar una reserva de <b>$${DEPOSIT_AMOUNT.toLocaleString('es-CL')}</b> pesos, la cual se descuenta del valor total del servicio.</p>
         <p>Transferir a:</p>
         <ul style="margin:0 0 10px 18px;padding:0">${bankList}</ul>
         <p>Envianos el comprobante por WhatsApp:
           <a href="${whatsLink}" style="color:#d63384;font-weight:bold;text-decoration:none">Enviar comprobante</a>
         </p>
+        <p>Si el pago no se confirma dentro de las proximas <b>24 horas</b>, la hora se liberara automaticamente.</p>
         <p>Si faltas a tu hora, no hay devolucion del abono. Puedes reagendar con el mismo abono avisando minimo 24 horas antes.</p>
         <p style="font-size:12px;color:#666;margin-top:18px">
           Gracias por tu preferencia.<br>Vanessa Nails Studio

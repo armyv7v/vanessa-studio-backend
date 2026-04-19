@@ -43,8 +43,8 @@ Busca `POLICIES` (línea 48):
 ```javascript
 const POLICIES = {
   deposit: {
-    amount: 5000, // ← ACTUALIZA si cambias el monto del abono
-    description: 'Para apartar tu hora debes enviar una reserva de $5.000 pesos...'
+    amount: 10000, // ← ACTUALIZA si cambias el monto del abono
+    description: 'Para apartar tu hora debes enviar una reserva de $10.000 pesos...'
   },
   // ...
 };
