@@ -486,6 +486,39 @@ const buildEmailHtml = ({ clientName, fecha, hora, duracion, telefono, serviceNa
   </div>`;
 };
 
+const buildPaymentConfirmedEmailHtml = ({ clientName, fecha, hora, serviceName, htmlLink, validationCode }) => {
+  return `
+  <div style="font-family:Arial,sans-serif;color:#333;line-height:1.6">
+    <div style="max-width:560px;margin:auto;border:1px solid #f2d7e2;border-radius:12px;overflow:hidden">
+      <div style="background:#fef0f5;padding:16px 20px">
+        <h2 style="margin:0;color:#d63384">¡Pago Confirmado!</h2>
+      </div>
+      <div style="padding:20px">
+        <p>Hola <b>${clientName}</b>,</p>
+        <p>Tu abono de reserva ha sido validado correctamente. Tu cita está <b>confirmada y asegurada</b>.</p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;margin:12px 0">
+          <tr><td style="padding:6px 0;width:140px"><b>Servicio:</b></td><td>${serviceName || '-'}</td></tr>
+          <tr><td style="padding:6px 0"><b>Fecha:</b></td><td>${fecha}</td></tr>
+          <tr><td style="padding:6px 0"><b>Hora:</b></td><td>${hora}</td></tr>
+          ${htmlLink ? `<tr><td style="padding:6px 0"><b>Evento:</b></td><td><a href="${htmlLink}">Abrir en Google Calendar</a></td></tr>` : ''}
+        </table>
+        <div style="background:#f8f9fa;padding:15px;border-radius:8px;margin:16px 0;text-align:center">
+          <p style="margin:0;font-size:13px;color:#999">Código de reserva: <b>${validationCode}</b></p>
+        </div>
+        <p>Recordá llegar a la hora de tu cita. Si necesitás reagendar, recordá hacerlo con al menos 24 horas de anticipación.</p>
+        <p style="font-size:12px;color:#666;margin-top:18px">
+          Gracias por tu preferencia.<br>Vanessa Nails Studio
+        </p>
+      </div>
+    </div>
+  </div>`;
+};
+
+const getExpectedDeviceToken = () => {
+  const password = process.env.ADMIN_PASSWORD || 'Admin2308';
+  return crypto.createHash('sha256').update(password.trim()).digest('hex');
+};
+
 const getLatestCustomerByEmail = async (sheets, email) => {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
@@ -674,23 +707,27 @@ exports.handler = async (event) => {
 
     // POST /api/validate-attendance - Confirmar asistencia
     if (event.httpMethod === 'POST' && path.includes('/validate-attendance')) {
-      const { code, adminPin } = JSON.parse(event.body || '{}');
+      const { code, adminPin, deviceToken } = JSON.parse(event.body || '{}');
 
       if (!code) {
         return {
           statusCode: 400,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'C\u00f3digo de validaci\u00f3n requerido' })
+          body: JSON.stringify({ error: 'Código de validación requerido' })
         };
       }
 
-      // Validar PIN de admin
+      // Validar PIN de admin o token de dispositivo
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
-      if (!adminPin || adminPin !== ADMIN_PIN) {
+      const expectedToken = getExpectedDeviceToken();
+      const isPinValid = adminPin && adminPin === ADMIN_PIN;
+      const isTokenValid = deviceToken && deviceToken === expectedToken;
+
+      if (!isPinValid && !isTokenValid) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
+          body: JSON.stringify({ error: 'PIN o token de administrador incorrecto' })
         };
       }
 
@@ -743,22 +780,27 @@ exports.handler = async (event) => {
     }
 
     if (event.httpMethod === 'POST' && path.includes('/confirm-payment')) {
-      const { code, adminPin } = JSON.parse(event.body || '{}');
+      const { code, adminPin, deviceToken } = JSON.parse(event.body || '{}');
 
       if (!code) {
         return {
           statusCode: 400,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'Codigo de reserva requerido' })
+          body: JSON.stringify({ error: 'Código de reserva requerido' })
         };
       }
 
+      // Validar PIN de admin o token de dispositivo
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
-      if (!adminPin || adminPin !== ADMIN_PIN) {
+      const expectedToken = getExpectedDeviceToken();
+      const isPinValid = adminPin && adminPin === ADMIN_PIN;
+      const isTokenValid = deviceToken && deviceToken === expectedToken;
+
+      if (!isPinValid && !isTokenValid) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
+          body: JSON.stringify({ error: 'PIN o token de administrador incorrecto' })
         };
       }
 
@@ -780,20 +822,42 @@ exports.handler = async (event) => {
         };
       }
 
-      if (reservation.paymentStatus === PAYMENT_STATUS.EXPIRED || reservation.paymentStatus === PAYMENT_STATUS.CANCELLED) {
-        return {
-          statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'No se puede confirmar el pago de una reserva liberada o cancelada' })
-        };
-      }
+      // Si estaba expirada, recreamos el evento en Google Calendar
+      const wasExpired = reservation.paymentStatus === PAYMENT_STATUS.EXPIRED || reservation.paymentStatus === PAYMENT_STATUS.CANCELLED || reservation.isExpired;
+      let eventId = null;
+      let htmlLink = null;
 
-      if (reservation.isExpired) {
-        return {
-          statusCode: 400,
-          headers: corsHeaders,
-          body: JSON.stringify({ error: 'La reserva ya vencio y debe liberarse; no puede confirmarse fuera del plazo de 24 horas.' })
-        };
+      if (wasExpired) {
+        const startTime = DateTime.fromISO(reservation.startLocal, { zone: TZ });
+        const endTime = DateTime.fromISO(reservation.endLocal, { zone: TZ });
+
+        // Insertar en calendario
+        const eventTitle = `Cita (Restaurada): ${reservation.service} con ${reservation.name}${reservation.extraCupo === 'SI' ? ' (EXTRA)' : ''}`;
+        const eventDescription = [
+          `Cliente: ${reservation.name}`,
+          `Email: ${reservation.email}`,
+          `Telefono: ${reservation.phone}`,
+          `Servicio: ${reservation.service}`,
+          `Duracion: ${reservation.duration} min`,
+          `Modalidad: ${reservation.extraCupo === 'SI' ? 'Extra Cupo' : 'Normal'}`,
+          `Código de validación: ${reservation.validationCode}`,
+          `Restaurada por administrador el ${DateTime.now().setZone(TZ).toFormat('dd/MM/yyyy HH:mm')}`,
+        ].join('\n');
+
+        const newEvent = await calendar.events.insert({
+          calendarId: CALENDAR_ID,
+          sendUpdates: 'all', // Enviar correo con invitación
+          requestBody: {
+            summary: eventTitle,
+            description: eventDescription,
+            start: { dateTime: startTime.toISO(), timeZone: TZ },
+            end: { dateTime: endTime.toISO(), timeZone: TZ },
+            attendees: [{ email: reservation.email }],
+          },
+        });
+
+        eventId = newEvent.data.id;
+        htmlLink = newEvent.data.htmlLink;
       }
 
       const nowIso = DateTime.now().setZone(TZ).toISO();
@@ -803,28 +867,56 @@ exports.handler = async (event) => {
         sheetName: SHEET_NAME,
         reservation,
         nowIso,
+        eventId,
+        htmlLink,
       });
+
+      // Enviar correo de confirmación de pago
+      try {
+        const emailHtml = buildPaymentConfirmedEmailHtml({
+          clientName: reservation.name,
+          fecha: DateTime.fromISO(reservation.startLocal, { zone: TZ }).toFormat('dd/MM/yyyy'),
+          hora: DateTime.fromISO(reservation.startLocal, { zone: TZ }).toFormat('HH:mm'),
+          serviceName: reservation.service,
+          htmlLink: htmlLink || reservation.htmlLink,
+          validationCode: reservation.validationCode,
+        });
+
+        const sender = { name: BREVO_SENDER_NAME, email: BREVO_SENDER_EMAIL };
+
+        await brevoApi.sendTransacEmail({
+          sender,
+          to: [{ email: reservation.email, name: reservation.name }],
+          subject: `Pago Confirmado - Tu cita está asegurada - ${reservation.service}`,
+          htmlContent: emailHtml,
+        });
+      } catch (emailError) {
+        console.error('Error enviando email de confirmación de pago:', emailError);
+      }
 
       return {
         statusCode: 200,
         headers: corsHeaders,
         body: JSON.stringify({
           success: true,
-          message: 'Pago confirmado correctamente',
+          message: wasExpired ? 'Pago confirmado y cita restaurada correctamente' : 'Pago confirmado correctamente',
           reservation: updatedReservation,
         })
       };
     }
 
     if (event.httpMethod === 'POST' && path.includes('/expire-pending-payments')) {
-      const { adminPin } = JSON.parse(event.body || '{}');
+      const { adminPin, deviceToken } = JSON.parse(event.body || '{}');
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
+      const expectedToken = getExpectedDeviceToken();
+      const isPinValid = adminPin && adminPin === ADMIN_PIN;
+      const isTokenValid = deviceToken && deviceToken === expectedToken;
 
-      if (!adminPin || adminPin !== ADMIN_PIN) {
+      if (!isPinValid && !isTokenValid) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN de administrador incorrecto' })
+          body: JSON.stringify({ error: 'PIN o token de administrador incorrecto' })
         };
       }
 

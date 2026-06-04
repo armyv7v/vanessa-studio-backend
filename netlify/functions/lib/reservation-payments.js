@@ -91,12 +91,25 @@ async function updateReservationPaymentFields({
   };
 }
 
-async function confirmReservationPayment({ sheets, spreadsheetId, sheetName, reservation, nowIso }) {
+async function confirmReservationPayment({ sheets, spreadsheetId, sheetName, reservation, nowIso, eventId = null, htmlLink = null }) {
+  if (eventId || htmlLink) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `${sheetName}!J${reservation.rowIndex}:K${reservation.rowIndex}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[eventId || reservation.eventId || '', htmlLink || reservation.htmlLink || '']],
+      },
+    });
+  }
+
   return updateReservationPaymentFields({
     sheets,
     spreadsheetId,
     sheetName,
-    reservation,
+    reservation: (eventId || htmlLink)
+      ? { ...reservation, eventId: eventId || reservation.eventId, htmlLink: htmlLink || reservation.htmlLink }
+      : reservation,
     paymentStatus: PAYMENT_STATUS.CONFIRMED,
     paymentConfirmedAt: nowIso,
     paymentExpiresAt: reservation.paymentExpiresAt || '',
