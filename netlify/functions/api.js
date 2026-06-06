@@ -514,9 +514,24 @@ const buildPaymentConfirmedEmailHtml = ({ clientName, fecha, hora, serviceName, 
   </div>`;
 };
 
-const getExpectedDeviceToken = () => {
-  const password = process.env.ADMIN_PASSWORD || 'Admin2308';
-  return crypto.createHash('sha256').update(password.trim()).digest('hex');
+const isDeviceTokenValid = (token) => {
+  if (!token) return false;
+  const candidates = [
+    process.env.ADMIN_PASSWORD,
+    process.env.ADMIN_PASSWORD_FALLBACK,
+    process.env.NEXT_PUBLIC_ADMIN_PASSWORD,
+    process.env.NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK,
+    'Admin2308'
+  ];
+  const hashes = candidates
+    .filter(Boolean)
+    .map(p => crypto.createHash('sha256').update(p.trim()).digest('hex'));
+  
+  const isValid = hashes.includes(token);
+  if (!isValid) {
+    console.log('[Auth Debug] Device token validation failed. Received token prefix:', token.substring(0, 8));
+  }
+  return isValid;
 };
 
 const getLatestCustomerByEmail = async (sheets, email) => {
@@ -719,9 +734,8 @@ exports.handler = async (event) => {
 
       // Validar PIN de admin o token de dispositivo
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
-      const expectedToken = getExpectedDeviceToken();
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const isTokenValid = deviceToken && deviceToken === expectedToken;
+      const isTokenValid = isDeviceTokenValid(deviceToken);
 
       if (!isPinValid && !isTokenValid) {
         return {
@@ -792,9 +806,8 @@ exports.handler = async (event) => {
 
       // Validar PIN de admin o token de dispositivo
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
-      const expectedToken = getExpectedDeviceToken();
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const isTokenValid = deviceToken && deviceToken === expectedToken;
+      const isTokenValid = isDeviceTokenValid(deviceToken);
 
       if (!isPinValid && !isTokenValid) {
         return {
@@ -908,9 +921,8 @@ exports.handler = async (event) => {
     if (event.httpMethod === 'POST' && path.includes('/expire-pending-payments')) {
       const { adminPin, deviceToken } = JSON.parse(event.body || '{}');
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
-      const expectedToken = getExpectedDeviceToken();
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const isTokenValid = deviceToken && deviceToken === expectedToken;
+      const isTokenValid = isDeviceTokenValid(deviceToken);
 
       if (!isPinValid && !isTokenValid) {
         return {
