@@ -518,7 +518,7 @@ const getEnvVar = (name) => {
   return process.env[name];
 };
 
-const getDeviceTokenCandidatesInfo = () => {
+const getDeviceTokenCandidatesInfo = (debugOut = {}) => {
   const rawCandidates = [
     getEnvVar('ADMIN_PASSWORD'),
     getEnvVar('ADMIN_PASSWORD_FALLBACK'),
@@ -556,6 +556,23 @@ const getDeviceTokenCandidatesInfo = () => {
     k.toUpperCase().includes('ADMIN') || k.toUpperCase().includes('PASSWORD')
   );
   
+  // Detailed diagnostics for environment variables
+  const varDiagnostics = {};
+  ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_FALLBACK', 'NEXT_PUBLIC_ADMIN_PASSWORD', 'NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK'].forEach(name => {
+    const val = getEnvVar(name);
+    varDiagnostics[name] = {
+      type: typeof val,
+      defined: val !== undefined,
+      length: val ? val.length : 0,
+      firstChar: val ? val.substring(0, 1) : '',
+      lastChar: val ? val.substring(val.length - 1) : ''
+    };
+  });
+  
+  if (debugOut) {
+    debugOut.varDiagnostics = varDiagnostics;
+  }
+  
   return {
     candidatesCount: uniqueCandidates.length,
     hashes: hashes,
@@ -566,7 +583,7 @@ const getDeviceTokenCandidatesInfo = () => {
 
 const isDeviceTokenValid = (token, debugOut = {}) => {
   if (!token) return false;
-  const info = getDeviceTokenCandidatesInfo();
+  const info = getDeviceTokenCandidatesInfo(debugOut);
   if (debugOut) {
     debugOut.candidatesCount = info.candidatesCount;
     debugOut.candidateLengths = info.candidateLengths;
