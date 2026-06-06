@@ -514,20 +514,55 @@ const buildPaymentConfirmedEmailHtml = ({ clientName, fecha, hora, serviceName, 
   </div>`;
 };
 
-const isDeviceTokenValid = (token) => {
-  if (!token) return false;
-  const candidates = [
+const getDeviceTokenCandidatesInfo = () => {
+  const rawCandidates = [
     process.env.ADMIN_PASSWORD,
     process.env.ADMIN_PASSWORD_FALLBACK,
     process.env.NEXT_PUBLIC_ADMIN_PASSWORD,
     process.env.NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK,
     'Admin2308'
   ];
-  const hashes = candidates
-    .filter(Boolean)
-    .map(p => crypto.createHash('sha256').update(p.trim()).digest('hex'));
   
-  const isValid = hashes.includes(token);
+  const cleanCandidates = [];
+  rawCandidates.forEach(p => {
+    if (!p) return;
+    const trimmed = p.trim();
+    if (!trimmed) return;
+    cleanCandidates.push(trimmed);
+    
+    // Also add versions without quotes if they exist
+    let withoutQuotes = trimmed;
+    if (withoutQuotes.startsWith('"') && withoutQuotes.endsWith('"')) {
+      withoutQuotes = withoutQuotes.substring(1, withoutQuotes.length - 1);
+    }
+    if (withoutQuotes.startsWith("'") && withoutQuotes.endsWith("'")) {
+      withoutQuotes = withoutQuotes.substring(1, withoutQuotes.length - 1);
+    }
+    const cleanTrimmed = withoutQuotes.trim();
+    if (cleanTrimmed && cleanTrimmed !== trimmed) {
+      cleanCandidates.push(cleanTrimmed);
+    }
+  });
+
+  const uniqueCandidates = Array.from(new Set(cleanCandidates));
+  const hashes = uniqueCandidates.map(p => crypto.createHash('sha256').update(p).digest('hex'));
+  
+  return {
+    candidatesCount: uniqueCandidates.length,
+    hashes: hashes,
+    candidateLengths: uniqueCandidates.map(p => p.length)
+  };
+};
+
+const isDeviceTokenValid = (token, debugOut = {}) => {
+  if (!token) return false;
+  const info = getDeviceTokenCandidatesInfo();
+  if (debugOut) {
+    debugOut.candidatesCount = info.candidatesCount;
+    debugOut.candidateLengths = info.candidateLengths;
+  }
+  
+  const isValid = info.hashes.includes(token);
   if (!isValid) {
     console.log('[Auth Debug] Device token validation failed. Received token prefix:', token.substring(0, 8));
   }
@@ -733,15 +768,26 @@ exports.handler = async (event) => {
       }
 
       // Validar PIN de admin o token de dispositivo
-      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
-      const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const isTokenValid = isDeviceTokenValid(deviceToken);
+      const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || 2308;
+      const isPinValid = adminPin && adminPin == ADMIN_PIN;
+      const debugOut = {};
+      const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
 
       if (!isPinValid && !isTokenValid) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN o token de administrador incorrecto' })
+          body: JSON.stringify({ 
+            error: 'PIN o token de administrador incorrecto',
+            debug: {
+              hasPin: !!adminPin,
+              pinLength: adminPin ? adminPin.length : 0,
+              hasToken: !!deviceToken,
+              tokenLength: deviceToken ? deviceToken.length : 0,
+              tokenPrefix: deviceToken ? deviceToken.substring(0, 8) : '',
+              ...debugOut
+            }
+          })
         };
       }
 
@@ -807,13 +853,24 @@ exports.handler = async (event) => {
       // Validar PIN de admin o token de dispositivo
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const isTokenValid = isDeviceTokenValid(deviceToken);
+      const debugOut = {};
+      const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
 
       if (!isPinValid && !isTokenValid) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN o token de administrador incorrecto' })
+          body: JSON.stringify({ 
+            error: 'PIN o token de administrador incorrecto',
+            debug: {
+              hasPin: !!adminPin,
+              pinLength: adminPin ? adminPin.length : 0,
+              hasToken: !!deviceToken,
+              tokenLength: deviceToken ? deviceToken.length : 0,
+              tokenPrefix: deviceToken ? deviceToken.substring(0, 8) : '',
+              ...debugOut
+            }
+          })
         };
       }
 
@@ -922,13 +979,24 @@ exports.handler = async (event) => {
       const { adminPin, deviceToken } = JSON.parse(event.body || '{}');
       const ADMIN_PIN = process.env.ADMIN_VALIDATION_PIN || '2308';
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const isTokenValid = isDeviceTokenValid(deviceToken);
+      const debugOut = {};
+      const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
 
       if (!isPinValid && !isTokenValid) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'PIN o token de administrador incorrecto' })
+          body: JSON.stringify({ 
+            error: 'PIN o token de administrador incorrecto',
+            debug: {
+              hasPin: !!adminPin,
+              pinLength: adminPin ? adminPin.length : 0,
+              hasToken: !!deviceToken,
+              tokenLength: deviceToken ? deviceToken.length : 0,
+              tokenPrefix: deviceToken ? deviceToken.substring(0, 8) : '',
+              ...debugOut
+            }
+          })
         };
       }
 
