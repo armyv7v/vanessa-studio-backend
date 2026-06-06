@@ -514,12 +514,16 @@ const buildPaymentConfirmedEmailHtml = ({ clientName, fecha, hora, serviceName, 
   </div>`;
 };
 
+const getEnvVar = (name) => {
+  return process.env[name];
+};
+
 const getDeviceTokenCandidatesInfo = () => {
   const rawCandidates = [
-    process.env['ADMIN_PASSWORD'],
-    process.env['ADMIN_PASSWORD_FALLBACK'],
-    process.env['NEXT_PUBLIC_ADMIN_PASSWORD'],
-    process.env['NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK'],
+    getEnvVar('ADMIN_PASSWORD'),
+    getEnvVar('ADMIN_PASSWORD_FALLBACK'),
+    getEnvVar('NEXT_PUBLIC_ADMIN_PASSWORD'),
+    getEnvVar('NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK'),
     'Admin2308'
   ];
   
@@ -775,7 +779,7 @@ exports.handler = async (event) => {
       }
 
       // Validar PIN de admin o token de dispositivo
-      const ADMIN_PIN = process.env['ADMIN_VALIDATION_PIN'] || 2308;
+      const ADMIN_PIN = getEnvVar('ADMIN_VALIDATION_PIN') || 2308;
       const isPinValid = adminPin && adminPin == ADMIN_PIN;
       const debugOut = {};
       const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
@@ -858,7 +862,7 @@ exports.handler = async (event) => {
       }
 
       // Validar PIN de admin o token de dispositivo
-      const ADMIN_PIN = process.env['ADMIN_VALIDATION_PIN'] || '2308';
+      const ADMIN_PIN = getEnvVar('ADMIN_VALIDATION_PIN') || '2308';
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
       const debugOut = {};
       const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
@@ -984,7 +988,7 @@ exports.handler = async (event) => {
 
     if (event.httpMethod === 'POST' && path.includes('/expire-pending-payments')) {
       const { adminPin, deviceToken } = JSON.parse(event.body || '{}');
-      const ADMIN_PIN = process.env['ADMIN_VALIDATION_PIN'] || '2308';
+      const ADMIN_PIN = getEnvVar('ADMIN_VALIDATION_PIN') || '2308';
       const isPinValid = adminPin && adminPin === ADMIN_PIN;
       const debugOut = {};
       const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
