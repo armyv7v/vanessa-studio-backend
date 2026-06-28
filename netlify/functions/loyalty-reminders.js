@@ -8,7 +8,7 @@ const TZ = 'America/Santiago';
 const LOYALTY_GOAL = 6;
 const LOYALTY_MAX_DAYS = 30;
 const LOYALTY_IDEAL_DAYS = 21;
-const BOOKING_URL = 'https://vanessastudioback.netlify.app';
+const BOOKING_URL = process.env.FRONTEND_URL || 'https://vanessa-studio.vercel.app';
 
 const getGoogleClient = () => {
     const {
