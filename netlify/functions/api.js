@@ -36,7 +36,7 @@ const LOYALTY_IDEAL_DAYS = 21; // Ciclo ideal de servicio
 
 // --- QR Validation Configuration ---
 // URL del frontend donde está la página de validación
-const BASE_URL = process.env.FRONTEND_URL || 'https://vanessa-studiols.pages.dev';
+const BASE_URL = process.env.FRONTEND_URL || 'https://vanessa-studio.vercel.app';
 
 // --- Google OAuth client (user based, not service account) ---
 const getGoogleClient = () => {
@@ -69,13 +69,113 @@ const BREVO_SENDER_EMAIL = process.env.BREVO_SENDER_EMAIL || 'nailsvanessacl@gma
 const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'Vanessa Nails Studio';
 
 // --- CORS headers ---
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'Content-Type',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://vanessa-studio.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+
+const getAllowedOrigins = () => {
+  const configured = [
+    process.env.FRONTEND_URL,
+    process.env.NEXT_PUBLIC_SITE_URL,
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+    process.env.ADMIN_ALLOWED_ORIGINS,
+  ]
+    .flatMap((value) => String(value || '').split(','))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  return Array.from(new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]));
+};
+
+const isAllowedOrigin = (origin) => !origin || getAllowedOrigins().includes(origin);
+
+const getCorsHeaders = (event) => {
+  const origin = event?.headers?.origin || event?.headers?.Origin || '';
+  const headers = {
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Credentials': 'true',
+    'Vary': 'Origin',
+  };
+
+  if (origin && isAllowedOrigin(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+
+  return headers;
 };
 
 const normalizeEmail = (value = '') => String(value).trim().toLowerCase();
+
+const isEmailValid = (email) => typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+const isReasonableString = (value, min = 1, max = 200) =>
+  typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
+
+const normalizePhone = (value = '') => String(value).trim().replace(/[^\d+]/g, '');
+
+const isPhoneValid = (phone) => {
+  const normalized = normalizePhone(phone);
+  const digits = normalized.replace(/\D/g, '');
+  return digits.length >= 8 && digits.length <= 15;
+};
+
+const isValidationCodeValid = (code) => (
+  typeof code === 'string' &&
+  (
+    /^[a-f0-9]{8}$/i.test(code.trim()) ||
+    /^VAL-\d{8,20}$/.test(code.trim())
+  )
+);
+
+const isDateOnlyValid = (date) => (
+  typeof date === 'string' &&
+  /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+  DateTime.fromISO(date, { zone: TZ }).isValid
+);
+
+const isTimeValid = (time) => (
+  typeof time === 'string' &&
+  /^\d{2}:\d{2}$/.test(time)
+);
+
+const validateBookingPayload = (data = {}) => {
+  const client = data.client || {};
+  const name = typeof client.name === 'string' ? client.name.trim() : '';
+  const email = normalizeEmail(client.email || '');
+  const phone = normalizePhone(client.phone || '');
+  const serviceName = typeof data.serviceName === 'string' ? data.serviceName.trim() : '';
+  const date = typeof data.date === 'string' ? data.date.trim() : '';
+  const start = typeof data.start === 'string' ? data.start.trim() : '';
+  const durationMin = Number(data.durationMin);
+
+  if (!isReasonableString(name, 2, 100)) return { ok: false, error: 'Nombre invalido.' };
+  if (!isEmailValid(email)) return { ok: false, error: 'Email invalido.' };
+  if (!isPhoneValid(phone)) return { ok: false, error: 'Telefono invalido.' };
+  if (!isReasonableString(serviceName, 2, 120)) return { ok: false, error: 'Servicio invalido.' };
+  if (!isDateOnlyValid(date)) return { ok: false, error: 'Fecha invalida.' };
+  if (!isTimeValid(start)) return { ok: false, error: 'Hora invalida.' };
+  if (!Number.isFinite(durationMin) || durationMin < 15 || durationMin > 480) {
+    return { ok: false, error: 'Duracion invalida.' };
+  }
+
+  const startTime = DateTime.fromISO(`${date}T${start}`, { zone: TZ });
+  if (!startTime.isValid) return { ok: false, error: 'Fecha u hora invalida.' };
+
+  return {
+    ok: true,
+    value: {
+      client: { name, email, phone },
+      date,
+      start,
+      durationMin,
+      serviceName,
+      extraCupo: Boolean(data.extraCupo),
+    },
+  };
+};
 
 function extractBrevoErrorDetails(error) {
   const response = error?.response || error?.response?.res || null;
@@ -518,83 +618,17 @@ const getEnvVar = (name) => {
   return process.env[name];
 };
 
-const getDeviceTokenCandidatesInfo = (debugOut = {}) => {
-  const rawCandidates = [
-    getEnvVar('ADMIN_PASSWORD'),
-    getEnvVar('ADMIN_PASSWORD_FALLBACK'),
-    getEnvVar('NEXT_PUBLIC_ADMIN_PASSWORD'),
-    getEnvVar('NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK'),
-    'Admin2308'
-  ];
-  
-  const cleanCandidates = [];
-  rawCandidates.forEach(p => {
-    if (!p) return;
-    const trimmed = p.trim();
-    if (!trimmed) return;
-    cleanCandidates.push(trimmed);
-    
-    // Also add versions without quotes if they exist
-    let withoutQuotes = trimmed;
-    if (withoutQuotes.startsWith('"') && withoutQuotes.endsWith('"')) {
-      withoutQuotes = withoutQuotes.substring(1, withoutQuotes.length - 1);
-    }
-    if (withoutQuotes.startsWith("'") && withoutQuotes.endsWith("'")) {
-      withoutQuotes = withoutQuotes.substring(1, withoutQuotes.length - 1);
-    }
-    const cleanTrimmed = withoutQuotes.trim();
-    if (cleanTrimmed && cleanTrimmed !== trimmed) {
-      cleanCandidates.push(cleanTrimmed);
-    }
-  });
-
-  const uniqueCandidates = Array.from(new Set(cleanCandidates));
-  const hashes = uniqueCandidates.map(p => crypto.createHash('sha256').update(p).digest('hex'));
-  
-  // Safe extraction of environment keys matching password patterns
-  const envKeys = Object.keys(process.env).filter(k => 
-    k.toUpperCase().includes('ADMIN') || k.toUpperCase().includes('PASSWORD')
-  );
-  
-  // Detailed diagnostics for environment variables
-  const varDiagnostics = {};
-  ['ADMIN_PASSWORD', 'ADMIN_PASSWORD_FALLBACK', 'NEXT_PUBLIC_ADMIN_PASSWORD', 'NEXT_PUBLIC_ADMIN_PASSWORD_FALLBACK'].forEach(name => {
-    const val = getEnvVar(name);
-    varDiagnostics[name] = {
-      type: typeof val,
-      defined: val !== undefined,
-      length: val ? val.length : 0,
-      firstChar: val ? val.substring(0, 1) : '',
-      lastChar: val ? val.substring(val.length - 1) : ''
-    };
-  });
-  
-  if (debugOut) {
-    debugOut.varDiagnostics = varDiagnostics;
+const getAdminValidationPin = () => {
+  const pin = getEnvVar('ADMIN_VALIDATION_PIN');
+  if (!pin || !String(pin).trim()) {
+    throw new Error('ADMIN_VALIDATION_PIN not set');
   }
-  
-  return {
-    candidatesCount: uniqueCandidates.length,
-    hashes: hashes,
-    candidateLengths: uniqueCandidates.map(p => p.length),
-    envKeys: envKeys
-  };
+  return String(pin).trim();
 };
 
-const isDeviceTokenValid = (token, debugOut = {}) => {
-  if (!token) return false;
-  const info = getDeviceTokenCandidatesInfo(debugOut);
-  if (debugOut) {
-    debugOut.candidatesCount = info.candidatesCount;
-    debugOut.candidateLengths = info.candidateLengths;
-    debugOut.envKeys = info.envKeys;
-  }
-  
-  const isValid = info.hashes.includes(token);
-  if (!isValid) {
-    console.log('[Auth Debug] Device token validation failed. Received token prefix:', token.substring(0, 8));
-  }
-  return isValid;
+const isAdminPinValid = (adminPin) => {
+  if (!adminPin) return false;
+  return String(adminPin).trim() === getAdminValidationPin();
 };
 
 const getLatestCustomerByEmail = async (sheets, email) => {
@@ -636,8 +670,19 @@ const getLatestCustomerByEmail = async (sheets, email) => {
 };
 
 exports.handler = async (event) => {
+  const corsHeaders = getCorsHeaders(event);
+  const origin = event?.headers?.origin || event?.headers?.Origin || '';
+
   if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: corsHeaders, body: '' };
+    return {
+      statusCode: isAllowedOrigin(origin) ? 204 : 403,
+      headers: corsHeaders,
+      body: '',
+    };
+  }
+
+  if (!isAllowedOrigin(origin)) {
+    return { statusCode: 403, headers: corsHeaders, body: JSON.stringify({ error: 'Forbidden origin' }) };
   }
 
   try {
@@ -710,8 +755,8 @@ exports.handler = async (event) => {
       if (path.includes('/validate-attendance/')) {
         const code = path.split('/').pop();
 
-        if (!code) {
-          return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Código requerido' }) };
+        if (!isValidationCodeValid(code)) {
+          return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Codigo invalido' }) };
         }
 
         const reservation = await findReservationByCode(sheets, code);
@@ -785,37 +830,21 @@ exports.handler = async (event) => {
 
     // POST /api/validate-attendance - Confirmar asistencia
     if (event.httpMethod === 'POST' && path.includes('/validate-attendance')) {
-      const { code, adminPin, deviceToken } = JSON.parse(event.body || '{}');
+      const { code, adminPin } = JSON.parse(event.body || '{}');
 
-      if (!code) {
+      if (!isValidationCodeValid(code)) {
         return {
           statusCode: 400,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'Código de validación requerido' })
+          body: JSON.stringify({ error: 'Codigo de validacion invalido' })
         };
       }
 
-      // Validar PIN de admin o token de dispositivo
-      const ADMIN_PIN = getEnvVar('ADMIN_VALIDATION_PIN') || 2308;
-      const isPinValid = adminPin && adminPin == ADMIN_PIN;
-      const debugOut = {};
-      const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
-
-      if (!isPinValid && !isTokenValid) {
+      if (!isAdminPinValid(adminPin)) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ 
-            error: 'PIN o token de administrador incorrecto',
-            debug: {
-              hasPin: !!adminPin,
-              pinLength: adminPin ? adminPin.length : 0,
-              hasToken: !!deviceToken,
-              tokenLength: deviceToken ? deviceToken.length : 0,
-              tokenPrefix: deviceToken ? deviceToken.substring(0, 8) : '',
-              ...debugOut
-            }
-          })
+          body: JSON.stringify({ error: 'Unauthorized' })
         };
       }
 
@@ -868,37 +897,21 @@ exports.handler = async (event) => {
     }
 
     if (event.httpMethod === 'POST' && path.includes('/confirm-payment')) {
-      const { code, adminPin, deviceToken } = JSON.parse(event.body || '{}');
+      const { code, adminPin } = JSON.parse(event.body || '{}');
 
-      if (!code) {
+      if (!isValidationCodeValid(code)) {
         return {
           statusCode: 400,
           headers: corsHeaders,
-          body: JSON.stringify({ error: 'Código de reserva requerido' })
+          body: JSON.stringify({ error: 'Codigo de reserva invalido' })
         };
       }
 
-      // Validar PIN de admin o token de dispositivo
-      const ADMIN_PIN = getEnvVar('ADMIN_VALIDATION_PIN') || '2308';
-      const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const debugOut = {};
-      const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
-
-      if (!isPinValid && !isTokenValid) {
+      if (!isAdminPinValid(adminPin)) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ 
-            error: 'PIN o token de administrador incorrecto',
-            debug: {
-              hasPin: !!adminPin,
-              pinLength: adminPin ? adminPin.length : 0,
-              hasToken: !!deviceToken,
-              tokenLength: deviceToken ? deviceToken.length : 0,
-              tokenPrefix: deviceToken ? deviceToken.substring(0, 8) : '',
-              ...debugOut
-            }
-          })
+          body: JSON.stringify({ error: 'Unauthorized' })
         };
       }
 
@@ -1004,27 +1017,12 @@ exports.handler = async (event) => {
     }
 
     if (event.httpMethod === 'POST' && path.includes('/expire-pending-payments')) {
-      const { adminPin, deviceToken } = JSON.parse(event.body || '{}');
-      const ADMIN_PIN = getEnvVar('ADMIN_VALIDATION_PIN') || '2308';
-      const isPinValid = adminPin && adminPin === ADMIN_PIN;
-      const debugOut = {};
-      const isTokenValid = isDeviceTokenValid(deviceToken, debugOut);
-
-      if (!isPinValid && !isTokenValid) {
+      const { adminPin } = JSON.parse(event.body || '{}');
+      if (!isAdminPinValid(adminPin)) {
         return {
           statusCode: 401,
           headers: corsHeaders,
-          body: JSON.stringify({ 
-            error: 'PIN o token de administrador incorrecto',
-            debug: {
-              hasPin: !!adminPin,
-              pinLength: adminPin ? adminPin.length : 0,
-              hasToken: !!deviceToken,
-              tokenLength: deviceToken ? deviceToken.length : 0,
-              tokenPrefix: deviceToken ? deviceToken.substring(0, 8) : '',
-              ...debugOut
-            }
-          })
+          body: JSON.stringify({ error: 'Unauthorized' })
         };
       }
 
@@ -1053,10 +1051,11 @@ exports.handler = async (event) => {
 
     if (event.httpMethod === 'POST') {
       const data = JSON.parse(event.body || '{}');
-      const { client, date, start, durationMin, serviceName, extraCupo } = data;
-      if (!client || !date || !start || !durationMin || !serviceName) {
-        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Missing required booking fields.' }) };
+      const bookingValidation = validateBookingPayload(data);
+      if (!bookingValidation.ok) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: bookingValidation.error }) };
       }
+      const { client, date, start, durationMin, serviceName, extraCupo } = bookingValidation.value;
 
       const startTime = DateTime.fromISO(`${date}T${start}`, { zone: TZ });
       const endTime = startTime.plus({ minutes: durationMin });
@@ -1239,6 +1238,14 @@ exports.handler = async (event) => {
     // GET /api/validate-attendance/:code - Obtener info de la cita
     if (event.httpMethod === 'GET' && path.includes('/validate-attendance/')) {
       const code = path.split('/validate-attendance/')[1];
+
+      if (!isValidationCodeValid(code)) {
+        return {
+          statusCode: 400,
+          headers: corsHeaders,
+          body: JSON.stringify({ error: 'Codigo de validacion invalido' })
+        };
+      }
 
       const reservation = await findReservationByCode(sheets, code);
 

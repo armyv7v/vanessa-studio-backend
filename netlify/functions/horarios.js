@@ -20,10 +20,42 @@ const DEFAULT_HORARIOS = {
     blackoutRanges: [],
 };
 
-const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+const DEFAULT_ALLOWED_ORIGINS = [
+    'https://vanessa-studio.vercel.app',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+];
+
+const getAllowedOrigins = () => {
+    const configured = [
+        process.env.FRONTEND_URL,
+        process.env.NEXT_PUBLIC_SITE_URL,
+        process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '',
+        process.env.ADMIN_ALLOWED_ORIGINS,
+    ]
+        .flatMap((value) => String(value || '').split(','))
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+    return Array.from(new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]));
+};
+
+const isAllowedOrigin = (origin) => !origin || getAllowedOrigins().includes(origin);
+
+const getCorsHeaders = (event) => {
+    const origin = event?.headers?.origin || event?.headers?.Origin || '';
+    const headers = {
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Credentials': 'true',
+        'Vary': 'Origin',
+    };
+
+    if (origin && isAllowedOrigin(origin)) {
+        headers['Access-Control-Allow-Origin'] = origin;
+    }
+
+    return headers;
 };
 
 const LOCAL_DATA_FILE = path.join(process.cwd(), 'data', 'horarios.json');
@@ -246,8 +278,19 @@ async function writeConfig(data) {
 }
 
 exports.handler = async (event) => {
+    const corsHeaders = getCorsHeaders(event);
+    const origin = event?.headers?.origin || event?.headers?.Origin || '';
+
     if (event.httpMethod === 'OPTIONS') {
-        return { statusCode: 204, headers: corsHeaders, body: '' };
+        return {
+            statusCode: isAllowedOrigin(origin) ? 204 : 403,
+            headers: corsHeaders,
+            body: '',
+        };
+    }
+
+    if (!isAllowedOrigin(origin)) {
+        return { statusCode: 403, headers: corsHeaders, body: JSON.stringify({ error: 'Forbidden origin' }) };
     }
 
     try {
