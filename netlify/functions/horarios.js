@@ -7,17 +7,24 @@ const path = require('path');
 
 const DEFAULT_HORARIOS = {
     horarioAtencion: {
-        lunes: ['09:00', '18:00'],
-        martes: ['09:00', '18:00'],
-        miércoles: ['09:00', '18:00'],
-        jueves: ['09:00', '18:00'],
-        viernes: ['09:00', '18:00'],
-        sábado: ['10:00', '14:00'],
-        domingo: [],
+        lunes: ['10:00', '21:00'],
+        martes: ['10:00', '21:00'],
+        miercoles: ['10:00', '21:00'],
+        jueves: ['10:00', '21:00'],
+        viernes: ['10:00', '21:00'],
+        sabado: ['10:00', '21:00'],
+        domingo: ['10:00', '21:00'],
     },
     disabledDays: [],
     disabledDates: [],
     blackoutRanges: [],
+    extraCuposConfig: {
+        enabled: true,
+        start: '18:00',
+        end: '20:00',
+        daysToShow: 35,
+        extraChargeClp: 5000,
+    },
 };
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -67,12 +74,23 @@ function isValidTime(value) {
     return typeof value === 'string' && /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
 }
 
+function normalizeDayName(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+}
+
 function sanitizeHorarioAtencion(input) {
     const source = input && typeof input === 'object' ? input : {};
+    const normalizedSource = Object.fromEntries(
+        Object.entries(source).map(([day, range]) => [normalizeDayName(day), range])
+    );
     const result = {};
 
     for (const dia of Object.keys(DEFAULT_HORARIOS.horarioAtencion)) {
-        const rango = Array.isArray(source[dia]) ? source[dia] : DEFAULT_HORARIOS.horarioAtencion[dia];
+        const rango = Array.isArray(normalizedSource[dia]) ? normalizedSource[dia] : DEFAULT_HORARIOS.horarioAtencion[dia];
 
         if (rango.length === 0) {
             result[dia] = [];
@@ -80,7 +98,7 @@ function sanitizeHorarioAtencion(input) {
         }
 
         if (rango.length !== 2 || !isValidTime(rango[0]) || !isValidTime(rango[1]) || rango[0] >= rango[1]) {
-            throw new Error(`Horario inválido para ${dia}`);
+            throw new Error(`Horario invalido para ${dia}`);
         }
 
         result[dia] = [rango[0], rango[1]];
@@ -127,12 +145,32 @@ function sanitizeBlackoutRanges(input) {
             const label = typeof item.label === 'string' ? item.label.trim() : '';
 
             if (!isValidIsoDate(start) || !isValidIsoDate(end) || start > end) {
-                throw new Error('Rango de bloqueo inválido');
+                throw new Error('Rango de bloqueo invalido');
             }
 
             return { start, end, label };
         })
         .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
+}
+
+function sanitizeExtraCuposConfig(input) {
+    const source = input && typeof input === 'object' ? input : {};
+    const start = typeof source.start === 'string' ? source.start : DEFAULT_HORARIOS.extraCuposConfig.start;
+    const end = typeof source.end === 'string' ? source.end : DEFAULT_HORARIOS.extraCuposConfig.end;
+    const daysToShow = Number(source.daysToShow);
+    const extraChargeClp = Number(source.extraChargeClp);
+
+    if (!isValidTime(start) || !isValidTime(end) || start >= end) {
+        throw new Error('Configuracion de extra cupos invalida');
+    }
+
+    return {
+        enabled: source.enabled !== false,
+        start,
+        end,
+        daysToShow: Number.isFinite(daysToShow) && daysToShow > 0 ? daysToShow : DEFAULT_HORARIOS.extraCuposConfig.daysToShow,
+        extraChargeClp: Number.isFinite(extraChargeClp) && extraChargeClp >= 0 ? extraChargeClp : DEFAULT_HORARIOS.extraCuposConfig.extraChargeClp,
+    };
 }
 
 function sanitizeConfig(payload) {
@@ -141,6 +179,7 @@ function sanitizeConfig(payload) {
         disabledDays: sanitizeDisabledDays(payload?.disabledDays),
         disabledDates: sanitizeDisabledDates(payload?.disabledDates),
         blackoutRanges: sanitizeBlackoutRanges(payload?.blackoutRanges),
+        extraCuposConfig: sanitizeExtraCuposConfig(payload?.extraCuposConfig),
     };
 }
 

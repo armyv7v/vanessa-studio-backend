@@ -1,32 +1,21 @@
 {
-    "horarioAtencion": {
-        "lunes": [
-            "09:00",
-            "18:00"
-        ],
-        "martes": [
-            "09:00",
-            "18:00"
-        ],
-        "miércoles": [
-            "09:00",
-            "18:00"
-        ],
-        "jueves": [
-            "09:00",
-            "18:00"
-        ],
-        "viernes": [
-            "09:00",
-            "18:00"
-        ],
-        "sábado": [
-            "10:00",
-            "14:00"
-        ],
-        "domingo": []
-    },
-    "disabledDays": [],
-    "disabledDates": [],
-    "blackoutRanges": []
+  "horarioAtencion": {
+    "lunes": ["10:00", "21:00"],
+    "martes": ["10:00", "21:00"],
+    "miercoles": ["10:00", "21:00"],
+    "jueves": ["10:00", "21:00"],
+    "viernes": ["10:00", "21:00"],
+    "sabado": ["10:00", "21:00"],
+    "domingo": ["10:00", "21:00"]
+  },
+  "disabledDays": [],
+  "disabledDates": [],
+  "blackoutRanges": [],
+  "extraCuposConfig": {
+    "enabled": true,
+    "start": "18:00",
+    "end": "20:00",
+    "daysToShow": 35,
+    "extraChargeClp": 5000
+  }
 }
