@@ -126,7 +126,7 @@ const isValidationCodeValid = (code) => (
   typeof code === 'string' &&
   (
     /^[a-f0-9]{8}$/i.test(code.trim()) ||
-    /^VAL-\d{8,20}$/.test(code.trim())
+    /^VAL-[A-Z0-9-]{8,64}$/i.test(code.trim())
   )
 );
 
@@ -386,6 +386,126 @@ const findReservationByCode = async (sheets, validationCode) => {
   }
 
   return null;
+};
+
+const buildCalendarEventPayload = ({ name, email, phone, service, duration, extraCupo, validationCode, startTime, endTime, note = '' }) => ({
+  summary: `Cita: ${service} con ${name}${extraCupo === 'SI' ? ' (EXTRA)' : ''}`,
+  description: [
+    `Cliente: ${name}`,
+    `Email: ${email}`,
+    `Telefono: ${phone}`,
+    `Servicio: ${service}`,
+    `Duracion: ${duration} min`,
+    `Modalidad: ${extraCupo === 'SI' ? 'Extra Cupo' : 'Normal'}`,
+    validationCode ? `C?digo de validaci?n: ${validationCode}` : '',
+    note,
+  ].filter(Boolean).join('\n'),
+  start: { dateTime: startTime.toISO(), timeZone: TZ },
+  end: { dateTime: endTime.toISO(), timeZone: TZ },
+  attendees: email ? [{ email }] : [],
+});
+
+const ensureEditableReservation = (reservation) => {
+  if (!reservation) return 'Reserva no encontrada';
+  if (reservation.attended === 'SI') return 'No se puede editar una cita que ya fue validada como asistida.';
+  if (reservation.paymentStatus === PAYMENT_STATUS.CANCELLED) return 'La cita ya est? cancelada.';
+  return '';
+};
+
+const updateReservationClientFields = async ({ sheets, reservation, name, email, phone, service }) => {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!B${reservation.rowIndex}:E${reservation.rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[name, email, phone, service]] },
+  });
+
+  return { ...reservation, name, email, phone, service };
+};
+
+const updateReservationScheduleFields = async ({ sheets, reservation, startTime, endTime, durationMin }) => {
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!F${reservation.rowIndex}:H${reservation.rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[startTime.toISO(), endTime.toISO(), durationMin]] },
+  });
+
+  return { ...reservation, startLocal: startTime.toISO(), endLocal: endTime.toISO(), duration: String(durationMin) };
+};
+
+const updateReservationCalendarEvent = async ({ calendar, reservation, updates, note }) => {
+  if (!reservation.eventId) return { eventId: '', htmlLink: reservation.htmlLink || '' };
+
+  const startTime = DateTime.fromISO(updates.startLocal || reservation.startLocal, { zone: TZ });
+  const endTime = DateTime.fromISO(updates.endLocal || reservation.endLocal, { zone: TZ });
+  if (!startTime.isValid || !endTime.isValid) return { eventId: reservation.eventId, htmlLink: reservation.htmlLink || '' };
+
+  const eventPayload = buildCalendarEventPayload({
+    name: updates.name || reservation.name,
+    email: updates.email || reservation.email,
+    phone: updates.phone || reservation.phone,
+    service: updates.service || reservation.service,
+    duration: updates.duration || reservation.duration,
+    extraCupo: reservation.extraCupo,
+    validationCode: reservation.validationCode,
+    startTime,
+    endTime,
+    note,
+  });
+
+  try {
+    const updated = await calendar.events.patch({
+      calendarId: CALENDAR_ID,
+      eventId: reservation.eventId,
+      sendUpdates: 'all',
+      requestBody: eventPayload,
+    });
+    return { eventId: updated.data.id || reservation.eventId, htmlLink: updated.data.htmlLink || reservation.htmlLink || '' };
+  } catch (error) {
+    const status = error?.code || error?.response?.status;
+    if (status === 404) return { eventId: '', htmlLink: '' };
+    throw error;
+  }
+};
+
+const cancelReservation = async ({ sheets, calendar, reservation, nowIso }) => {
+  if (reservation.eventId) {
+    try {
+      await calendar.events.delete({
+        calendarId: CALENDAR_ID,
+        eventId: reservation.eventId,
+        sendUpdates: 'all',
+      });
+    } catch (error) {
+      const status = error?.code || error?.response?.status;
+      if (status !== 404) throw error;
+    }
+  }
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!J${reservation.rowIndex}:K${reservation.rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [['', '']] },
+  });
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!O${reservation.rowIndex}:S${reservation.rowIndex}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[PAYMENT_STATUS.CANCELLED, reservation.paymentConfirmedAt || '', reservation.paymentExpiresAt || '', nowIso, 'ADMIN_CANCELLED']] },
+  });
+
+  return {
+    ...reservation,
+    eventId: '',
+    htmlLink: '',
+    paymentStatus: PAYMENT_STATUS.CANCELLED,
+    releasedAt: nowIso,
+    releaseReason: 'ADMIN_CANCELLED',
+    isExpired: false,
+  };
 };
 
 /**
@@ -1016,6 +1136,160 @@ exports.handler = async (event) => {
       };
     }
 
+
+    if (event.httpMethod === 'POST' && path.includes('/reservation-update')) {
+      const { code, adminPin, client = {}, service } = JSON.parse(event.body || '{}');
+
+      if (!isValidationCodeValid(code)) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Codigo de reserva invalido' }) };
+      }
+      if (!isAdminPinValid(adminPin)) {
+        return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
+      }
+
+      const name = typeof client.name === 'string' ? client.name.trim() : '';
+      const email = normalizeEmail(client.email || '');
+      const phone = normalizePhone(client.phone || '');
+      const serviceName = typeof service === 'string' ? service.trim() : '';
+
+      if (!isReasonableString(name, 2, 100)) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Nombre invalido.' }) };
+      if (!isEmailValid(email)) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Email invalido.' }) };
+      if (!isPhoneValid(phone)) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Telefono invalido.' }) };
+      if (!isReasonableString(serviceName, 2, 120)) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Servicio invalido.' }) };
+
+      const reservation = await findReservationByCode(sheets, code);
+      const editError = ensureEditableReservation(reservation);
+      if (editError) return { statusCode: reservation ? 400 : 404, headers: corsHeaders, body: JSON.stringify({ error: editError }) };
+
+      const calendarResult = await updateReservationCalendarEvent({
+        calendar,
+        reservation,
+        updates: { name, email, phone, service: serviceName },
+        note: `Datos actualizados por administrador el ${DateTime.now().setZone(TZ).toFormat('dd/MM/yyyy HH:mm')}`,
+      });
+
+      const updatedReservation = await updateReservationClientFields({ sheets, reservation, name, email, phone, service: serviceName });
+      if (calendarResult.eventId !== reservation.eventId || calendarResult.htmlLink !== reservation.htmlLink) {
+        await sheets.spreadsheets.values.update({
+          spreadsheetId: SHEET_ID,
+          range: `${SHEET_NAME}!J${reservation.rowIndex}:K${reservation.rowIndex}`,
+          valueInputOption: 'USER_ENTERED',
+          requestBody: { values: [[calendarResult.eventId, calendarResult.htmlLink]] },
+        });
+      }
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          message: 'Datos de la cita actualizados correctamente',
+          reservation: { ...updatedReservation, eventId: calendarResult.eventId, htmlLink: calendarResult.htmlLink },
+        }),
+      };
+    }
+
+    if (event.httpMethod === 'POST' && path.includes('/reservation-reschedule')) {
+      const { code, adminPin, date, start, durationMin } = JSON.parse(event.body || '{}');
+
+      if (!isValidationCodeValid(code)) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Codigo de reserva invalido' }) };
+      }
+      if (!isAdminPinValid(adminPin)) {
+        return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
+      }
+      if (!isDateOnlyValid(date)) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Fecha invalida.' }) };
+      if (!isTimeValid(start)) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Hora invalida.' }) };
+
+      const reservation = await findReservationByCode(sheets, code);
+      const editError = ensureEditableReservation(reservation);
+      if (editError) return { statusCode: reservation ? 400 : 404, headers: corsHeaders, body: JSON.stringify({ error: editError }) };
+      if (reservation.paymentStatus === PAYMENT_STATUS.EXPIRED || reservation.isExpired) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'No se puede reagendar una cita expirada. Primero confirm?/reactiv? el pago.' }) };
+      }
+
+      const parsedDuration = Number(durationMin || reservation.duration);
+      if (!Number.isFinite(parsedDuration) || parsedDuration < 15 || parsedDuration > 480) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Duracion invalida.' }) };
+      }
+
+      const startTime = DateTime.fromISO(`${date}T${start}`, { zone: TZ });
+      const endTime = startTime.plus({ minutes: parsedDuration });
+      if (!startTime.isValid || !endTime.isValid) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Fecha u hora invalida.' }) };
+      }
+
+      const conflictRes = await calendar.events.list({
+        calendarId: CALENDAR_ID,
+        timeMin: startTime.toISO(),
+        timeMax: endTime.toISO(),
+        timeZone: TZ,
+        singleEvents: true,
+        maxResults: 10,
+      });
+      const conflicts = (conflictRes.data.items || []).filter((item) => item.id !== reservation.eventId);
+      if (conflicts.length > 0) {
+        return { statusCode: 409, headers: corsHeaders, body: JSON.stringify({ error: 'El nuevo horario ya tiene una cita o bloqueo en Google Calendar.' }) };
+      }
+
+      const calendarResult = await updateReservationCalendarEvent({
+        calendar,
+        reservation,
+        updates: { startLocal: startTime.toISO(), endLocal: endTime.toISO(), duration: parsedDuration },
+        note: `Reagendada por administrador el ${DateTime.now().setZone(TZ).toFormat('dd/MM/yyyy HH:mm')}`,
+      });
+
+      if (!calendarResult.eventId) {
+        return { statusCode: 409, headers: corsHeaders, body: JSON.stringify({ error: 'No se encontr? el evento de Calendar para reagendar. Revis? la cita antes de continuar.' }) };
+      }
+
+      const updatedReservation = await updateReservationScheduleFields({ sheets, reservation, startTime, endTime, durationMin: parsedDuration });
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_NAME}!J${reservation.rowIndex}:K${reservation.rowIndex}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[calendarResult.eventId, calendarResult.htmlLink]] },
+      });
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({
+          success: true,
+          message: 'Cita reagendada correctamente',
+          reservation: { ...updatedReservation, eventId: calendarResult.eventId, htmlLink: calendarResult.htmlLink },
+        }),
+      };
+    }
+
+    if (event.httpMethod === 'POST' && path.includes('/reservation-cancel')) {
+      const { code, adminPin } = JSON.parse(event.body || '{}');
+
+      if (!isValidationCodeValid(code)) {
+        return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Codigo de reserva invalido' }) };
+      }
+      if (!isAdminPinValid(adminPin)) {
+        return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
+      }
+
+      const reservation = await findReservationByCode(sheets, code);
+      if (!reservation) return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Reserva no encontrada' }) };
+      if (reservation.attended === 'SI') return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'No se puede eliminar una cita que ya fue validada como asistida.' }) };
+      if (reservation.paymentStatus === PAYMENT_STATUS.CANCELLED) return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'La cita ya est? cancelada.' }) };
+
+      const updatedReservation = await cancelReservation({
+        sheets,
+        calendar,
+        reservation,
+        nowIso: DateTime.now().setZone(TZ).toISO(),
+      });
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({ success: true, message: 'Hora eliminada y liberada correctamente', reservation: updatedReservation }),
+      };
+    }
     if (event.httpMethod === 'POST' && path.includes('/expire-pending-payments')) {
       const { adminPin } = JSON.parse(event.body || '{}');
       if (!isAdminPinValid(adminPin)) {
