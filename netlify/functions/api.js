@@ -491,7 +491,14 @@ const updateReservationCalendarEvent = async ({ calendar, reservation, updates, 
 };
 
 const cancelReservation = async ({ sheets, calendar, reservation, nowIso }) => {
-  if (reservation.eventId) {
+  const shouldTouchCalendar = Boolean(
+    reservation.eventId
+    && reservation.paymentStatus !== PAYMENT_STATUS.EXPIRED
+    && reservation.paymentStatus !== PAYMENT_STATUS.CANCELLED
+    && !reservation.isExpired
+  );
+
+  if (shouldTouchCalendar) {
     try {
       await calendar.events.delete({
         calendarId: CALENDAR_ID,
@@ -499,8 +506,7 @@ const cancelReservation = async ({ sheets, calendar, reservation, nowIso }) => {
         sendUpdates: 'all',
       });
     } catch (error) {
-      const status = error?.code || error?.response?.status;
-      if (status !== 404) throw error;
+      if (!isDeletedCalendarResourceError(error)) throw error;
     }
   }
 
