@@ -435,11 +435,9 @@ const updateReservationScheduleFields = async ({ sheets, reservation, startTime,
 };
 
 const updateReservationCalendarEvent = async ({ calendar, reservation, updates, note }) => {
-  if (!reservation.eventId) return { eventId: '', htmlLink: reservation.htmlLink || '' };
-
   const startTime = DateTime.fromISO(updates.startLocal || reservation.startLocal, { zone: TZ });
   const endTime = DateTime.fromISO(updates.endLocal || reservation.endLocal, { zone: TZ });
-  if (!startTime.isValid || !endTime.isValid) return { eventId: reservation.eventId, htmlLink: reservation.htmlLink || '' };
+  if (!startTime.isValid || !endTime.isValid) return { eventId: reservation.eventId || '', htmlLink: reservation.htmlLink || '' };
 
   const eventPayload = buildCalendarEventPayload({
     name: updates.name || reservation.name,
@@ -454,6 +452,22 @@ const updateReservationCalendarEvent = async ({ calendar, reservation, updates, 
     note,
   });
 
+  const createReplacementEvent = async () => {
+    const inserted = await calendar.events.insert({
+      calendarId: CALENDAR_ID,
+      sendUpdates: 'all',
+      requestBody: eventPayload,
+    });
+    return {
+      eventId: inserted.data.id || '',
+      htmlLink: inserted.data.htmlLink || '',
+    };
+  };
+
+  if (!reservation.eventId) {
+    return createReplacementEvent();
+  }
+
   try {
     const updated = await calendar.events.patch({
       calendarId: CALENDAR_ID,
@@ -464,7 +478,9 @@ const updateReservationCalendarEvent = async ({ calendar, reservation, updates, 
     return { eventId: updated.data.id || reservation.eventId, htmlLink: updated.data.htmlLink || reservation.htmlLink || '' };
   } catch (error) {
     const status = error?.code || error?.response?.status;
-    if (status === 404) return { eventId: '', htmlLink: '' };
+    if (status === 404 || status === 410) {
+      return createReplacementEvent();
+    }
     throw error;
   }
 };
