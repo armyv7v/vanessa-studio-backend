@@ -388,6 +388,12 @@ const findReservationByCode = async (sheets, validationCode) => {
   return null;
 };
 
+const isDeletedCalendarResourceError = (error) => {
+  const status = error?.code || error?.status || error?.response?.status;
+  const message = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+  return status === 404 || status === 410 || message.includes('resource has been deleted') || message.includes('deleted');
+};
+
 const buildCalendarEventPayload = ({ name, email, phone, service, duration, extraCupo, validationCode, startTime, endTime, note = '' }) => ({
   summary: `Cita: ${service} con ${name}${extraCupo === 'SI' ? ' (EXTRA)' : ''}`,
   description: [
@@ -477,8 +483,7 @@ const updateReservationCalendarEvent = async ({ calendar, reservation, updates, 
     });
     return { eventId: updated.data.id || reservation.eventId, htmlLink: updated.data.htmlLink || reservation.htmlLink || '' };
   } catch (error) {
-    const status = error?.code || error?.response?.status;
-    if (status === 404 || status === 410) {
+    if (isDeletedCalendarResourceError(error)) {
       return createReplacementEvent();
     }
     throw error;
