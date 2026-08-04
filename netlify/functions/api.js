@@ -1347,6 +1347,133 @@ exports.handler = async (event) => {
       };
     }
 
+    // POST/GET /api/clientes - Obtener y agrupar la lista de clientes desde Google Sheets
+    if (path.includes('/clientes')) {
+      const body = JSON.parse(event.body || '{}');
+      if (body.adminPin && !isAdminPinValid(body.adminPin)) {
+        return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
+      }
+
+      const resReservas = await sheets.spreadsheets.values.get({
+        spreadsheetId: SHEET_ID,
+        range: `${SHEET_NAME}!A:N`,
+      });
+      const rowsReservas = resReservas.data.values || [];
+
+      let rowsFidelidad = [];
+      try {
+        const resFidelidad = await sheets.spreadsheets.values.get({
+          spreadsheetId: SHEET_ID,
+          range: `${LOYALTY_SHEET_NAME}!A:H`,
+        });
+        rowsFidelidad = resFidelidad.data.values || [];
+      } catch (e) {
+        console.warn('No se pudo leer TarjetasFidelidad en /clientes:', e.message);
+      }
+
+      const loyaltyMap = new Map();
+      for (let i = 1; i < rowsFidelidad.length; i++) {
+        const row = rowsFidelidad[i];
+        const email = normalizeEmail(row[0]);
+        if (email) {
+          loyaltyMap.set(email, {
+            stamps: parseInt(row[2]) || 0,
+            lastDate: row[3] || null,
+            deadline: row[4] || null,
+            rewardAvailable: row[5] === 'SI',
+            inPenalty: row[6] === 'SI',
+          });
+        }
+      }
+
+      const clientsMap = new Map();
+      for (let i = 1; i < rowsReservas.length; i++) {
+        const row = rowsReservas[i];
+        const rawEmail = row[2];
+        const email = normalizeEmail(rawEmail);
+        if (!email) continue;
+
+        const name = (row[1] || '').trim();
+        const phone = (row[3] || '').trim();
+        const service = (row[4] || '').trim();
+        const startDate = row[5] || '';
+        const duration = parseInt(row[7]) || 0;
+        const attended = (row[12] || '').trim().toUpperCase() === 'SI';
+        const validationCode = row[11] || '';
+
+        if (!clientsMap.has(email)) {
+          clientsMap.set(email, {
+            email,
+            name: name || 'Cliente Sin Nombre',
+            phone: phone || '',
+            totalReservations: 0,
+            attendedCount: 0,
+            firstAppointmentDate: startDate,
+            lastAppointmentDate: startDate,
+            serviceCounts: {},
+            appointments: [],
+            loyalty: loyaltyMap.get(email) || { stamps: 0, rewardAvailable: false, inPenalty: false },
+          });
+        }
+
+        const client = clientsMap.get(email);
+        if (name && (client.name === 'Cliente Sin Nombre' || !client.name)) client.name = name;
+        if (phone) client.phone = phone;
+
+        client.totalReservations += 1;
+        if (attended) client.attendedCount += 1;
+
+        if (startDate) {
+          if (!client.firstAppointmentDate || startDate < client.firstAppointmentDate) {
+            client.firstAppointmentDate = startDate;
+          }
+          if (!client.lastAppointmentDate || startDate > client.lastAppointmentDate) {
+            client.lastAppointmentDate = startDate;
+          }
+        }
+
+        if (service) {
+          client.serviceCounts[service] = (client.serviceCounts[service] || 0) + 1;
+        }
+
+        client.appointments.push({
+          date: startDate,
+          service: service || 'Servicio General',
+          duration,
+          attended,
+          validationCode,
+        });
+      }
+
+      const clients = Array.from(clientsMap.values()).map(c => {
+        c.appointments.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+        const favoriteServices = Object.entries(c.serviceCounts)
+          .sort((a, b) => b[1] - a[1])
+          .map(([svc]) => svc);
+
+        return {
+          email: c.email,
+          name: c.name,
+          phone: c.phone,
+          totalReservations: c.totalReservations,
+          attendedCount: c.attendedCount,
+          firstAppointmentDate: c.firstAppointmentDate,
+          lastAppointmentDate: c.lastAppointmentDate,
+          favoriteServices,
+          loyalty: c.loyalty,
+          appointments: c.appointments,
+        };
+      });
+
+      clients.sort((a, b) => String(b.lastAppointmentDate || '').localeCompare(String(a.lastAppointmentDate || '')));
+
+      return {
+        statusCode: 200,
+        headers: corsHeaders,
+        body: JSON.stringify({ success: true, clients }),
+      };
+    }
+
     if (event.httpMethod === 'POST') {
       const data = JSON.parse(event.body || '{}');
       const bookingValidation = validateBookingPayload(data);
@@ -1571,133 +1698,6 @@ exports.handler = async (event) => {
           attended: reservation.attended === 'SI',
           validatedAt: reservation.validatedAt
         })
-      };
-    }
-
-    // POST/GET /api/clientes - Obtener y agrupar la lista de clientes desde Google Sheets
-    if (path.includes('/clientes')) {
-      const body = JSON.parse(event.body || '{}');
-      if (body.adminPin && !isAdminPinValid(body.adminPin)) {
-        return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
-      }
-
-      const resReservas = await sheets.spreadsheets.values.get({
-        spreadsheetId: SHEET_ID,
-        range: `${SHEET_NAME}!A:N`,
-      });
-      const rowsReservas = resReservas.data.values || [];
-
-      let rowsFidelidad = [];
-      try {
-        const resFidelidad = await sheets.spreadsheets.values.get({
-          spreadsheetId: SHEET_ID,
-          range: `${LOYALTY_SHEET_NAME}!A:H`,
-        });
-        rowsFidelidad = resFidelidad.data.values || [];
-      } catch (e) {
-        console.warn('No se pudo leer TarjetasFidelidad en /clientes:', e.message);
-      }
-
-      const loyaltyMap = new Map();
-      for (let i = 1; i < rowsFidelidad.length; i++) {
-        const row = rowsFidelidad[i];
-        const email = normalizeEmail(row[0]);
-        if (email) {
-          loyaltyMap.set(email, {
-            stamps: parseInt(row[2]) || 0,
-            lastDate: row[3] || null,
-            deadline: row[4] || null,
-            rewardAvailable: row[5] === 'SI',
-            inPenalty: row[6] === 'SI',
-          });
-        }
-      }
-
-      const clientsMap = new Map();
-      for (let i = 1; i < rowsReservas.length; i++) {
-        const row = rowsReservas[i];
-        const rawEmail = row[2];
-        const email = normalizeEmail(rawEmail);
-        if (!email) continue;
-
-        const name = (row[1] || '').trim();
-        const phone = (row[3] || '').trim();
-        const service = (row[4] || '').trim();
-        const startDate = row[5] || '';
-        const duration = parseInt(row[7]) || 0;
-        const attended = (row[12] || '').trim().toUpperCase() === 'SI';
-        const validationCode = row[11] || '';
-
-        if (!clientsMap.has(email)) {
-          clientsMap.set(email, {
-            email,
-            name: name || 'Cliente Sin Nombre',
-            phone: phone || '',
-            totalReservations: 0,
-            attendedCount: 0,
-            firstAppointmentDate: startDate,
-            lastAppointmentDate: startDate,
-            serviceCounts: {},
-            appointments: [],
-            loyalty: loyaltyMap.get(email) || { stamps: 0, rewardAvailable: false, inPenalty: false },
-          });
-        }
-
-        const client = clientsMap.get(email);
-        if (name && (client.name === 'Cliente Sin Nombre' || !client.name)) client.name = name;
-        if (phone) client.phone = phone;
-
-        client.totalReservations += 1;
-        if (attended) client.attendedCount += 1;
-
-        if (startDate) {
-          if (!client.firstAppointmentDate || startDate < client.firstAppointmentDate) {
-            client.firstAppointmentDate = startDate;
-          }
-          if (!client.lastAppointmentDate || startDate > client.lastAppointmentDate) {
-            client.lastAppointmentDate = startDate;
-          }
-        }
-
-        if (service) {
-          client.serviceCounts[service] = (client.serviceCounts[service] || 0) + 1;
-        }
-
-        client.appointments.push({
-          date: startDate,
-          service: service || 'Servicio General',
-          duration,
-          attended,
-          validationCode,
-        });
-      }
-
-      const clients = Array.from(clientsMap.values()).map(c => {
-        c.appointments.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-        const favoriteServices = Object.entries(c.serviceCounts)
-          .sort((a, b) => b[1] - a[1])
-          .map(([svc]) => svc);
-
-        return {
-          email: c.email,
-          name: c.name,
-          phone: c.phone,
-          totalReservations: c.totalReservations,
-          attendedCount: c.attendedCount,
-          firstAppointmentDate: c.firstAppointmentDate,
-          lastAppointmentDate: c.lastAppointmentDate,
-          favoriteServices,
-          loyalty: c.loyalty,
-          appointments: c.appointments,
-        };
-      });
-
-      clients.sort((a, b) => String(b.lastAppointmentDate || '').localeCompare(String(a.lastAppointmentDate || '')));
-
-      return {
-        statusCode: 200,
-        headers: corsHeaders,
-        body: JSON.stringify({ success: true, clients }),
       };
     }
 
