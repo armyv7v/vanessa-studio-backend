@@ -838,6 +838,36 @@ exports.handler = async (event) => {
     if (event.httpMethod === 'GET') {
       const { date, email, startDate, endDate } = event.queryStringParameters || {};
 
+      if (path.includes('/campaigns')) {
+        let campaigns = [];
+        try {
+          const resCamp = await sheets.spreadsheets.values.get({
+            spreadsheetId: SHEET_ID,
+            range: 'CampanasRecordatorios!A:G',
+          });
+          const rows = resCamp.data.values || [];
+          if (rows.length > 1) {
+            campaigns = rows.slice(1).map((row, idx) => ({
+              rowIndex: idx + 2,
+              id: row[0] || `CAMP-${idx}`,
+              createdAt: row[1] || '',
+              subject: row[2] || '',
+              recipientsCount: Number(row[3]) || 0,
+              scheduledAt: row[4] || '',
+              status: row[5] || 'PENDIENTE',
+              bodyHtml: row[6] || '',
+            }));
+          }
+        } catch (e) {
+          console.warn('Pestaña CampanasRecordatorios no encontrada:', e.message);
+        }
+        return {
+          statusCode: 200,
+          headers: corsHeaders,
+          body: JSON.stringify({ success: true, campaigns }),
+        };
+      }
+
       if (path.includes('/validate-attendance-list')) {
         if (!startDate || !endDate) {
           return {
@@ -1472,6 +1502,171 @@ exports.handler = async (event) => {
         headers: corsHeaders,
         body: JSON.stringify({ success: true, clients }),
       };
+    }
+
+    // POST /api/reminders - Envío masivo inmediato, programación y suspensión de campañas
+    if (path.includes('/reminders')) {
+      const body = JSON.parse(event.body || '{}');
+      const { adminPin, action, recipients = [], subject, bodyHtml, scheduledAt, campaignId } = body;
+
+      if (!isAdminPinValid(adminPin)) {
+        return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
+      }
+
+      const ensureCampaignsSheet = async () => {
+        try {
+          await sheets.spreadsheets.values.get({
+            spreadsheetId: SHEET_ID,
+            range: 'CampanasRecordatorios!A1',
+          });
+        } catch {
+          try {
+            await sheets.spreadsheets.batchUpdate({
+              spreadsheetId: SHEET_ID,
+              requestBody: {
+                requests: [{ addSheet: { properties: { title: 'CampanasRecordatorios' } } }],
+              },
+            });
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: SHEET_ID,
+              range: 'CampanasRecordatorios!A1:G1',
+              valueInputOption: 'USER_ENTERED',
+              requestBody: {
+                values: [['ID', 'Fecha Creación', 'Asunto', 'Destinatarios', 'Fecha Programada', 'Estado', 'Cuerpo HTML']],
+              },
+            });
+          } catch (createErr) {
+            console.warn('No se pudo crear pestaña CampanasRecordatorios:', createErr.message);
+          }
+        }
+      };
+
+      await ensureCampaignsSheet();
+
+      if (action === 'suspend') {
+        if (!campaignId) {
+          return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'ID de campaña requerido' }) };
+        }
+        try {
+          const resCamp = await sheets.spreadsheets.values.get({
+            spreadsheetId: SHEET_ID,
+            range: 'CampanasRecordatorios!A:G',
+          });
+          const rows = resCamp.data.values || [];
+          let targetIndex = -1;
+          for (let i = 1; i < rows.length; i++) {
+            if (rows[i][0] === campaignId) {
+              targetIndex = i + 1;
+              break;
+            }
+          }
+          if (targetIndex > 0) {
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: SHEET_ID,
+              range: `CampanasRecordatorios!F${targetIndex}`,
+              valueInputOption: 'USER_ENTERED',
+              requestBody: { values: [['SUSPENDIDO']] },
+            });
+            return { statusCode: 200, headers: corsHeaders, body: JSON.stringify({ success: true, message: 'Campaña suspendida exitosamente' }) };
+          }
+        } catch (err) {
+          return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: 'Error al suspender campaña: ' + err.message }) };
+        }
+        return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Campaña no encontrada' }) };
+      }
+
+      if (action === 'send-immediate') {
+        let sentCount = 0;
+        const nowIso = DateTime.now().setZone(TZ).toISO();
+
+        for (const recipient of recipients) {
+          const email = recipient.email || recipient;
+          const name = recipient.name || 'Cliente';
+          const lastDate = recipient.lastAppointmentDate ? DateTime.fromISO(recipient.lastAppointmentDate, { zone: TZ }).toFormat('dd/MM/yyyy') : 'Sin registro';
+
+          let customBody = String(bodyHtml || '')
+            .replace(/\{nombre\}/gi, name)
+            .replace(/\{email\}/gi, email)
+            .replace(/\{ultima_cita\}/gi, lastDate);
+
+          const fullHtml = `
+          <div style="font-family:Arial,sans-serif;color:#333;line-height:1.6;max-width:600px;margin:0 auto;border:1px solid #f2d7e2;border-radius:16px;overflow:hidden">
+            <div style="background:linear-gradient(135deg, #FF3F9A 0%, #E6007E 100%);padding:24px;text-align:center;color:#fff">
+              <h2 style="margin:0;font-size:22px;font-weight:bold">Vanessa Nails Studio</h2>
+              <p style="margin:4px 0 0 0;font-size:13px;opacity:0.9">Recordatorio Personalizado</p>
+            </div>
+            <div style="padding:28px;background:#ffffff">
+              ${customBody}
+              <div style="text-align:center;margin:28px 0 16px 0">
+                <a href="${BASE_URL}" style="display:inline-block;background:#E6007E;color:#ffffff;padding:14px 28px;text-decoration:none;border-radius:12px;font-weight:bold;font-size:14px">
+                  Agendar mi Cita ✨
+                </a>
+              </div>
+            </div>
+            <div style="background:#fdf2f7;padding:16px;text-align:center;font-size:12px;color:#888;border-top:1px solid #f9e2ed">
+              Vanessa Nails Studio • Santiago, Chile<br>
+              Si tienes alguna consulta, contáctanos directamente por WhatsApp.
+            </div>
+          </div>`;
+
+          try {
+            await brevoApi.sendTransacEmail({
+              sender: { name: BREVO_SENDER_NAME, email: BREVO_SENDER_EMAIL },
+              to: [{ email, name }],
+              subject: subject || 'Recordatorio de Vanessa Nails Studio',
+              htmlContent: fullHtml,
+            });
+            sentCount++;
+          } catch (emailErr) {
+            console.error(`Error enviando email a ${email}:`, extractBrevoErrorDetails(emailErr));
+          }
+        }
+
+        const campId = `CAMP-${Date.now()}`;
+        try {
+          await sheets.spreadsheets.values.append({
+            spreadsheetId: SHEET_ID,
+            range: 'CampanasRecordatorios!A1',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+              values: [[campId, nowIso, subject, recipients.length, nowIso, 'ENVIADO', bodyHtml]],
+            },
+          });
+        } catch (e) {
+          console.warn('No se pudo guardar registro de campaña:', e.message);
+        }
+
+        return {
+          statusCode: 200,
+          headers: corsHeaders,
+          body: JSON.stringify({ success: true, sentCount, message: `Se enviaron ${sentCount} correos exitosamente.` }),
+        };
+      }
+
+      if (action === 'schedule') {
+        const campId = `CAMP-${Date.now()}`;
+        const nowIso = DateTime.now().setZone(TZ).toISO();
+        const scheduledIso = scheduledAt ? DateTime.fromISO(scheduledAt, { zone: TZ }).toISO() : nowIso;
+
+        try {
+          await sheets.spreadsheets.values.append({
+            spreadsheetId: SHEET_ID,
+            range: 'CampanasRecordatorios!A1',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: {
+              values: [[campId, nowIso, subject, recipients.length, scheduledIso, 'PENDIENTE', bodyHtml]],
+            },
+          });
+        } catch (e) {
+          console.warn('Error al guardar campaña programada:', e.message);
+        }
+
+        return {
+          statusCode: 200,
+          headers: corsHeaders,
+          body: JSON.stringify({ success: true, campaignId: campId, message: 'Campaña programada exitosamente.' }),
+        };
+      }
     }
 
     if (event.httpMethod === 'POST') {
