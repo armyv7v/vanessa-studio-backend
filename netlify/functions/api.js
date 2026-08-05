@@ -126,7 +126,8 @@ const isValidationCodeValid = (code) => (
   typeof code === 'string' &&
   (
     /^[a-f0-9]{8}$/i.test(code.trim()) ||
-    /^VAL-[A-Z0-9-]{8,64}$/i.test(code.trim())
+    /^VAL-[A-Z0-9-]{8,64}$/i.test(code.trim()) ||
+    /^RES-\d+$/i.test(code.trim())
   )
 );
 
@@ -379,8 +380,21 @@ const findReservationByCode = async (sheets, validationCode) => {
   const rows = res.data.values || [];
   if (rows.length <= 1) return null;
 
+  const trimmed = String(validationCode || '').trim();
+
+  // Si el código es sintético (RES-rowIndex), buscar por número de fila en Sheets
+  const resRowMatch = trimmed.match(/^RES-(\d+)$/i);
+  if (resRowMatch) {
+    const targetRowIndex = parseInt(resRowMatch[1], 10);
+    const rowOffsetIndex = targetRowIndex - 1; // 1-indexed row -> 0-indexed array
+    if (rowOffsetIndex >= 1 && rowOffsetIndex < rows.length && rows[rowOffsetIndex]) {
+      return buildReservationRecord(rows[rowOffsetIndex], targetRowIndex, TZ);
+    }
+  }
+
+  // Buscar por código de validación explícito (columna L)
   for (let i = 1; i < rows.length; i++) {
-    if (rows[i][11] === validationCode) {
+    if (rows[i][11] === trimmed) {
       return buildReservationRecord(rows[i], i + 1, TZ);
     }
   }
