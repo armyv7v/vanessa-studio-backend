@@ -563,6 +563,14 @@ const markAsAttended = async (sheets, reservation) => {
   return loyaltyUpdate;
 };
 
+function parseReservationDate(dateStr, zone) {
+  if (!dateStr) return DateTime.invalid('empty');
+  const clean = String(dateStr).trim().replace(' ', 'T');
+  const iso = DateTime.fromISO(clean, { zone });
+  if (iso.isValid) return iso;
+  return DateTime.fromFormat(clean, 'yyyy-MM-dd HH:mm', { zone });
+}
+
 const listReservationsByRange = async (sheets, startDate, endDate) => {
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
@@ -578,12 +586,12 @@ const listReservationsByRange = async (sheets, startDate, endDate) => {
   return rows
     .slice(1)
     .map((row, index) => buildReservationRecord(row, index + 2, TZ))
-    .filter((reservation) => reservation.startLocal && reservation.validationCode)
+    .filter((reservation) => reservation.startLocal)
     .filter((reservation) => {
-      const reservationDate = DateTime.fromISO(reservation.startLocal, { zone: TZ });
+      const reservationDate = parseReservationDate(reservation.startLocal, TZ);
       return reservationDate.isValid && reservationDate >= start && reservationDate <= end;
     })
-    .sort((a, b) => DateTime.fromISO(a.startLocal, { zone: TZ }).toMillis() - DateTime.fromISO(b.startLocal, { zone: TZ }).toMillis());
+    .sort((a, b) => parseReservationDate(a.startLocal, TZ).toMillis() - parseReservationDate(b.startLocal, TZ).toMillis());
 };
 
 
@@ -883,15 +891,15 @@ exports.handler = async (event) => {
           headers: corsHeaders,
           body: JSON.stringify({
             reservations: reservations.map((reservation) => {
-              const startLocal = DateTime.fromISO(reservation.startLocal, { zone: TZ });
+              const startLocal = parseReservationDate(reservation.startLocal, TZ);
               return {
-                code: reservation.validationCode,
+                code: reservation.validationCode || `RES-${reservation.rowIndex}`,
                 name: reservation.name,
                 email: reservation.email,
                 phone: reservation.phone,
                 service: reservation.service,
                 startLocal: reservation.startLocal,
-                dateLabel: startLocal.isValid ? startLocal.toFormat('dd/MM/yyyy') : '',
+                dateLabel: startLocal.isValid ? startLocal.toFormat('dd/MM/yyyy') : reservation.startLocal,
                 timeLabel: startLocal.isValid ? startLocal.toFormat('HH:mm') : '',
                 attended: reservation.attended === 'SI',
                 validatedAt: reservation.validatedAt || '',
