@@ -789,7 +789,8 @@ const getEnvVar = (name) => {
 
 const getAdminValidationPin = () => {
   const pin = getEnvVar('ADMIN_VALIDATION_PIN');
-  return (pin && String(pin).trim()) || '2308';
+  // Fail-closed: sin env, NO se usa el default '2308'. La validación de PIN queda deshabilitada.
+  return (pin && String(pin).trim()) || '';
 };
 
 const isAdminPinValid = (adminPin) => {
