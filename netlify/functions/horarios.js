@@ -25,6 +25,10 @@ const DEFAULT_HORARIOS = {
         daysToShow: 35,
         extraChargeClp: 5000,
     },
+    autoCancelUnpaidConfig: {
+        enabled: true,
+        expireAfterHours: 24,
+    },
 };
 
 const DEFAULT_ALLOWED_ORIGINS = [
@@ -175,6 +179,26 @@ function sanitizeExtraCuposConfig(input) {
     };
 }
 
+function sanitizeAutoCancelUnpaidConfig(input) {
+    const source = input && typeof input === 'object' ? input : {};
+    const expireAfterHours = Number(source.expireAfterHours);
+
+    if (source.enabled !== undefined && typeof source.enabled !== 'boolean') {
+        throw new Error('Configuracion de auto-cancelacion invalida');
+    }
+
+    if (source.expireAfterHours !== undefined && (!Number.isFinite(expireAfterHours) || expireAfterHours <= 0)) {
+        throw new Error('Configuracion de auto-cancelacion invalida');
+    }
+
+    return {
+        enabled: source.enabled !== false,
+        expireAfterHours: Number.isFinite(expireAfterHours) && expireAfterHours > 0
+            ? expireAfterHours
+            : DEFAULT_HORARIOS.autoCancelUnpaidConfig.expireAfterHours,
+    };
+}
+
 function sanitizeConfig(payload) {
     return {
         horarioAtencion: sanitizeHorarioAtencion(payload?.horarioAtencion),
@@ -182,6 +206,7 @@ function sanitizeConfig(payload) {
         disabledDates: sanitizeDisabledDates(payload?.disabledDates),
         blackoutRanges: sanitizeBlackoutRanges(payload?.blackoutRanges),
         extraCuposConfig: sanitizeExtraCuposConfig(payload?.extraCuposConfig),
+        autoCancelUnpaidConfig: sanitizeAutoCancelUnpaidConfig(payload?.autoCancelUnpaidConfig),
     };
 }
 
