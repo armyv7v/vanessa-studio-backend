@@ -28,6 +28,8 @@ const DEFAULT_HORARIOS = {
 };
 
 const DEFAULT_ALLOWED_ORIGINS = [
+    'https://nailsvanessa.cl',
+    'https://www.nailsvanessa.cl',
     'https://vanessa-studio.vercel.app',
     'http://localhost:3000',
     'http://127.0.0.1:3000',

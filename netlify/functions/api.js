@@ -36,7 +36,7 @@ const LOYALTY_IDEAL_DAYS = 21; // Ciclo ideal de servicio
 
 // --- QR Validation Configuration ---
 // URL del frontend donde está la página de validación
-const BASE_URL = process.env.FRONTEND_URL || 'https://vanessa-studio.vercel.app';
+const BASE_URL = process.env.FRONTEND_URL || 'https://nailsvanessa.cl';
 
 // --- Google OAuth client (user based, not service account) ---
 const getGoogleClient = () => {
@@ -70,6 +70,8 @@ const BREVO_SENDER_NAME = process.env.BREVO_SENDER_NAME || 'Vanessa Nails Studio
 
 // --- CORS headers ---
 const DEFAULT_ALLOWED_ORIGINS = [
+  'https://nailsvanessa.cl',
+  'https://www.nailsvanessa.cl',
   'https://vanessa-studio.vercel.app',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
